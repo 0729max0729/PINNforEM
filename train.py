@@ -1,6 +1,6 @@
 import torch
-from pina.model import FeedForward
-from pina.solvers import PINN
+from pina.model import FeedForward, FNO
+from pina.solvers import PINN, SupervisedSolver
 
 from pina import Trainer, Plotter
 
@@ -10,7 +10,7 @@ from Equations import InitialConditionEquation
 from Locations import PolygonLocation, PortLocation
 from Materials import Material, MaterialHandler
 from MaxwellProblem import Maxwell3D
-from NN import MultiscaleFourierNet, SinCosFeature3D
+from NN import MultiscaleFourierNet, SinCosFeature3D, FNO3D
 from Ports import WavePort
 
 device=torch.device('cuda' if torch.cuda.is_available() else 'cpu')
@@ -106,13 +106,35 @@ problem.print_information()
 
 
 # 定義神經網路模型
-#model = MultiscaleFourierNet(input_dimension=4,output_dimension=2).to(device)
+#model = MultiscaleFourierNet(input_dimension=len(problem.input_variables),output_dimension=len(problem.output_variables)).to(device)
+'''
 model = FeedForward(
     layers=[100, 100,100,100,100,100,100],
     func=torch.nn.Tanh,
     output_dimensions=len(problem.output_variables),
     input_dimensions=len(problem.input_variables)
 )
+'''
+
+# 定义 FNO 模型
+class FourierNeuralOperator:
+    pass
+
+# make model
+
+# 定义 FNO3D 模型
+model = FNO3D(
+    modes1=12,
+    modes2=12,
+    modes3=12,
+    width=32,
+    input_dim=len(problem.input_variables),
+    output_dim=len(problem.output_variables),
+    grid_size=(32,32,32)
+).to('cuda' if torch.cuda.is_available() else 'cpu')
+
+# make solver
+#pinn = SupervisedSolver(problem=problem, model=model)
 
 # 初始化 PINN
 pinn = PINN(
@@ -123,6 +145,7 @@ pinn = PINN(
     scheduler=torch.optim.lr_scheduler.MultiStepLR,
     scheduler_kwargs={'milestones' : [200, 500, 900, 1200], 'gamma':0.9}
 )
+
 # 定义模型检查点回调
 checkpoint_callback = ModelCheckpoint(
     dirpath='checkpoints/',  # 保存模型的目录
@@ -134,10 +157,11 @@ checkpoint_callback = ModelCheckpoint(
 
 # 创建 Trainer 实例，并传入回调函数
 trainer = Trainer(
+    batch_size=4,
     solver=pinn,
     max_epochs=2000,
     callbacks=[checkpoint_callback],
-    accelerator='gpu',
+    accelerator='cpu',
     enable_model_summary=True
 )
 

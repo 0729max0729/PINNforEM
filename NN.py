@@ -103,11 +103,135 @@ class SinCosFeature3D(torch.nn.Module):
         return LabelTensor(feature, ['A*sin(a*x+phi_x)sin(b*y+phi_y)sin(c*z+phi_z)cos(d*t+phi_t)'])
 
 
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+
+
+class FourierLayer3D(nn.Module):
+    def __init__(self, modes1, modes2, modes3, width):
+        """
+        modes1: x 方向傅里叶模式数量
+        modes2: y 方向傅里叶模式数量
+        modes3: z 方向傅里叶模式数量 (在 rfft 中是 N/2+1)
+        width: 网络宽度（通道数）
+        """
+        super(FourierLayer3D, self).__init__()
+        self.modes1 = modes1
+        self.modes2 = modes2
+        self.modes3 = modes3
+        self.width = width
+
+        self.scale = 1 / (width * width)
+        self.weights = nn.Parameter(
+            self.scale * torch.rand(width, width, modes1, modes2, modes3, dtype=torch.cfloat)
+        )
+
+    def forward(self, x):
+        batchsize = x.shape[0]
+        x_ft = torch.fft.rfftn(x, dim=[-3, -2, -1])
+
+        actual_modes1 = min(self.modes1, x_ft.shape[-3])
+        actual_modes2 = min(self.modes2, x_ft.shape[-2])
+        actual_modes3 = min(self.modes3, x_ft.shape[-1])
+
+        out_ft = torch.zeros_like(x_ft)
+        for i in range(self.width):
+            out_ft[:, i, :actual_modes1, :actual_modes2, :actual_modes3] = (
+                    x_ft[:, i, :actual_modes1, :actual_modes2, :actual_modes3] *
+                    self.weights[i, i, :actual_modes1, :actual_modes2, :actual_modes3]
+            )
+
+        x = torch.fft.irfftn(out_ft, s=(x.size(-3), x.size(-2), x.size(-1)))
+        return x
+
+
+class FNO3D(nn.Module):
+    def __init__(self, modes1, modes2, modes3, width, input_dim, output_dim, grid_size):
+        """
+        modes1, modes2, modes3: 每个方向上的傅里叶模式数
+        width: 每层的隐藏通道数
+        input_dim: 输入特征维度 (4: x, y, z, f)
+        output_dim: 输出特征维度 (2)
+        grid_size: (grid_x, grid_y, grid_z) 目标网格大小
+        """
+        super(FNO3D, self).__init__()
+        self.width = width
+        self.grid_size = grid_size
+
+        # Lifting Layer: 将输入映射到 3D 空间
+        self.fc0 = nn.Linear(input_dim, width * grid_size[0] * grid_size[1] * grid_size[2])
+
+        # Fourier Layers
+        self.fourier_layers = nn.ModuleList([
+            FourierLayer3D(modes1, modes2, modes3, self.width) for _ in range(4)
+        ])
+
+        # 非线性激活函数
+        self.activation = nn.GELU()
+
+        # Projection Layers
+        self.fc1 = nn.Linear(self.width, self.width)
+        self.fc2 = nn.Linear(self.width, output_dim)
+
+    def forward(self, x):
+        """
+        x: (batch, 4)
+        """
+        batch_size = x.shape[0]
+
+        # Lifting Layer: 映射到 3D 网格
+        x = self.fc0(x)  # (batch, grid_x * grid_y * grid_z * width)
+        x = x.view(batch_size, self.width, *self.grid_size)  # (batch, channels, grid_x, grid_y, grid_z)
+        x = self.activation(x)
+
+        # Fourier Layers
+        for layer in self.fourier_layers:
+            x = layer(x)
+            x = self.activation(x)
+
+        # 全局平均池化
+        x = torch.mean(x, dim=(-3, -2, -1))  # (batch, channels)
+
+        # Linear projection to output_dim
+        x = self.fc1(x)  # (batch, width)
+        x = self.activation(x)
+        x = self.fc2(x)  # (batch, output_dim)
+
+        return x
+
 
 # 測試網絡
 if __name__ == "__main__":
-    model = MultiscaleFourierNet(input_dimension=4, output_dimension=6)
-    x = torch.rand(10, 4)  # 10個樣本，4維輸入 (x, y, z, t)
-    output = model(x)
-    print("輸入形狀:", x.shape)  # torch.Size([10, 4])
-    print("輸出形狀:", output.shape)  # torch.Size([10, 6])
+    # 模拟输入
+    batch_size = 4
+    input_dim = 4  # 输入特征维度
+    output_dim = 2  # 输出特征维度
+    grid_size = (16, 16, 16)  # 目标网格大小
+
+    # 输入维度: (batch_size, input_dim)
+    x = torch.rand(batch_size, input_dim).to('cuda' if torch.cuda.is_available() else 'cpu')
+
+    # 定义 FNO3D 模型
+    fno3d_model = FNO3D(
+        modes1=12,
+        modes2=12,
+        modes3=12,
+        width=32,
+        input_dim=input_dim,
+        output_dim=output_dim,
+        grid_size=grid_size
+    ).to('cuda' if torch.cuda.is_available() else 'cpu')
+
+    # 前向传播
+    output = fno3d_model(x)
+
+    # 输出形状
+    print("Input shape:", x.shape)
+    print("Output shape:", output.shape)
+
+
