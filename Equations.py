@@ -1,211 +1,137 @@
 import torch
 from pina.equation import Equation
-from pina.operators import grad
+from pina.operators import laplacian
 
 
-class Maxwell3DEquation(Equation):
-    def __init__(self, sigma=0.0, epsilon=8.85e-12, mu=1.256e-6):
+class ConductorPotentialEquation(Equation):
+    """
+    導體內電勢方程 (實部與虛部表示，考慮 ε 的虛部，假設電荷密度為 0)
+    """
+    def __init__(self, sigma=0.0, epsilon=8.85e-12, mu=1.256e-6, tand=0.0):
         """
-        Maxwell3DEquation class. This class enforces the solution to satisfy
-        the Maxwell dynamic electric field equations in 3D.
-
-        :param torch.float32 sigma: conductivity coefficient (default 0.0)
-        :param torch.float32 epsilon: permittivity coefficient (default 8.85e-12)
-        :param torch.float32 mu: permeability coefficient (default 1.256e-6)
+        :param float sigma: 導電率
+        :param float epsilon: 介電常數
+        :param float mu: 磁導率
+        :param float tand: 損耗正切
         """
         self.sigma = sigma
-        self.epsilon = epsilon
+        self.epsilon_real = epsilon
+        self.epsilon_imag = epsilon * tand  # 虛部 ε'' = ε * tand
         self.mu = mu
 
         def equation(input_, output_):
             """
-            Define the residuals of Maxwell's equations in 3D.
+            定義導體內電位方程的殘差，假設電荷密度為 0。
             """
-            E_x = output_.extract(['E_x'])
-            E_y = output_.extract(['E_y'])
-            E_z = output_.extract(['E_z'])
-            H_x = output_.extract(['H_x'])
-            H_y = output_.extract(['H_y'])
-            H_z = output_.extract(['H_z'])
+            # 提取變量
+            phi_r = output_.extract(['phi_r'])  # 電勢實部
+            phi_i = output_.extract(['phi_i'])  # 電勢虛部
 
-            # 方程 1: ∂E_y/∂z - ∂E_z/∂y = -μ ∂H_x/∂t
-            residual_1 = grad(E_y, input_, d='z') - grad(E_z, input_, d='y') + self.mu * grad(H_x, input_, d='t')
+            f = input_.extract(['f'])
+            omega = 2 * torch.pi * f
 
-            # 方程 2: ∂E_z/∂x - ∂E_x/∂z = -μ ∂H_y/∂t
-            residual_2 = grad(E_z, input_, d='x') - grad(E_x, input_, d='z') + self.mu * grad(H_y, input_, d='t')
+            # 方程殘差（實部）
+            residual_r = (
+                laplacian(output_, input_,components=['phi_r'],d=['x','y','z']) + omega * self.mu * self.sigma * phi_i
+            )
 
-            # 方程 3: ∂E_x/∂y - ∂E_y/∂x = -μ ∂H_z/∂t
-            residual_3 = grad(E_x, input_, d='y') - grad(E_y, input_, d='x') + self.mu * grad(H_z, input_, d='t')
+            # 方程殘差（虛部）
+            residual_i = (
+                laplacian(output_, input_,components=['phi_i'] ,d=['x','y','z']) - omega * self.mu * self.sigma * phi_r
+            )
 
-            # 方程 4: ∂H_y/∂z - ∂H_z/∂y - σ E_x - ε ∂E_x/∂t = 0
-            if self.sigma > 1:
-                residual_4 = (grad(H_y, input_, d='z') - grad(H_z, input_, d='y') - self.sigma * E_x - self.epsilon * grad(E_x, input_, d='t')) / self.sigma
-            else:
-                residual_4 = grad(H_y, input_, d='z') - grad(H_z, input_, d='y') - self.sigma * E_x - self.epsilon * grad(E_x, input_, d='t')
+            # 合併殘差
+            residual = residual_r**2 + residual_i**2
 
-            # 方程 5: ∂H_z/∂x - ∂H_x/∂z - σ E_y - ε ∂E_y/∂t = 0
-            if self.sigma > 1:
-                residual_5 = (grad(H_z, input_, d='x') - grad(H_x, input_, d='z') - self.sigma * E_y - self.epsilon * grad(E_y, input_, d='t')) / self.sigma
-            else:
-                residual_5 = grad(H_z, input_, d='x') - grad(H_x, input_, d='z') - self.sigma * E_y - self.epsilon * grad(E_y, input_, d='t')
-
-            # 方程 6: ∂H_x/∂y - ∂H_y/∂x - σ E_z - ε ∂E_z/∂t = 0
-            if self.sigma > 1:
-                residual_6 = (grad(H_x, input_, d='y') - grad(H_y, input_, d='x') - self.sigma * E_z - self.epsilon * grad(E_z, input_, d='t')) / self.sigma
-            else:
-                residual_6 = grad(H_x, input_, d='y') - grad(H_y, input_, d='x') - self.sigma * E_z - self.epsilon * grad(E_z, input_, d='t')
-
-            return residual_1 + residual_2 + residual_3 + residual_4 + residual_5 + residual_6
+            return residual/1e5
 
         super().__init__(equation)
 
 
 
-import torch
-from pina.equation import Equation
-from pina.operators import grad
 
-
-class InterfaceEMFieldEquation(Equation):
-    def __init__(self, epsilon_1, epsilon_2, mu_1, mu_2, normal_vector, sigma_1=0.0, sigma_2=0.0):
+class DielectricPotentialEquation(Equation):
+    """
+    介質內電勢方程 (實部與虛部表示，考慮 ε 的虛部，假設電荷密度為 0)
+    """
+    def __init__(self, epsilon=8.85e-12, mu=1.256e-6, tand=0.0):
         """
-        InterfaceEMFieldEquation class. This class enforces the interface
-        conditions for both electric and magnetic fields between two media.
-
-        :param float epsilon_1: Permittivity of medium 1.
-        :param float epsilon_2: Permittivity of medium 2.
-        :param float mu_1: Permeability of medium 1.
-        :param float mu_2: Permeability of medium 2.
-        :param torch.Tensor normal_vector: Normal vector at the interface (shape: [3]).
-        :param float sigma_1: Conductivity of medium 1.
-        :param float sigma_2: Conductivity of medium 2.
+        :param float epsilon: 介電常數
+        :param float mu: 磁導率
+        :param float tand: 損耗正切
         """
-        self.epsilon_1 = epsilon_1
-        self.epsilon_2 = epsilon_2
-        self.mu_1 = mu_1
-        self.mu_2 = mu_2
-        self.normal_vector = normal_vector / torch.norm(normal_vector)  # 確保法向量是單位向量
-        self.sigma_1 = sigma_1
-        self.sigma_2 = sigma_2
+        self.epsilon_real = epsilon
+        self.epsilon_imag = epsilon * tand  # 虛部 ε'' = ε * tand
+        self.mu = mu
 
         def equation(input_, output_):
             """
-            Define the interface electric and magnetic field conditions.
+            定義介質內電位方程的殘差，假設電荷密度為 0。
             """
-            # 提取電場分量
-            E_x = output_.extract(['E_x'])
-            E_y = output_.extract(['E_y'])
-            E_z = output_.extract(['E_z'])
+            # 提取變量
+            phi_r = output_.extract(['phi_r'])  # 電勢實部
+            phi_i = output_.extract(['phi_i'])  # 電勢虛部
 
-            # 提取磁場分量
-            H_x = output_.extract(['H_x'])
-            H_y = output_.extract(['H_y'])
-            H_z = output_.extract(['H_z'])
+            f = input_.extract(['f'])
+            omega = 2 * torch.pi * f
 
-            # 合併成 3D 張量
-            E = torch.stack([E_x, E_y, E_z], dim=-1)
-            H = torch.stack([H_x, H_y, H_z], dim=-1)
+            # 方程殘差（實部）
+            residual_r = (
+                laplacian(output_, input_,components=['phi_r'],d=['x','y','z']) + self.mu * self.epsilon_real * omega**2 * phi_r
+                - self.mu * self.epsilon_imag * omega**2 * phi_i
+            )
 
-            ## 1️⃣ **電場邊界條件**
+            # 方程殘差（虛部）
+            residual_i = (
+                laplacian(output_, input_,components=['phi_i'],d=['x','y','z']) + self.mu * self.epsilon_real * omega**2 * phi_i
+                + self.mu * self.epsilon_imag * omega**2 * phi_r
+            )
 
-            # 法向電場分量
-            E_n1 = torch.sum(E * self.normal_vector, dim=-1)
-            E_n2 = torch.sum(E * self.normal_vector, dim=-1)
+            # 合併殘差
+            residual = residual_r**2 + residual_i**2
 
-            # 切向電場分量
-            E_t1 = torch.cross(E, self.normal_vector.expand_as(E), dim=-1)
-            E_t2 = torch.cross(E, self.normal_vector.expand_as(E), dim=-1)
+            return residual
 
-            # 法向電場連續性條件
-            if self.sigma_1 > 1:
-                normal_condition_E = (self.epsilon_1 * E_n1 - self.epsilon_2 * E_n2) / self.sigma_1
-            else:
-                normal_condition_E = self.epsilon_1 * E_n1 - self.epsilon_2 * E_n2
+        super().__init__(equation)
 
-            # 切向電場連續性條件
-            if self.sigma_1 > 1:
-                tangential_condition_E = torch.norm(E_t1 - E_t2, dim=-1) / self.sigma_1
-            else:
-                tangential_condition_E = torch.norm(E_t1 - E_t2, dim=-1)
 
-            ## 2️⃣ **磁場邊界條件**
 
-            # 法向磁場分量
-            H_n1 = torch.sum(H * self.normal_vector, dim=-1)
-            H_n2 = torch.sum(H * self.normal_vector, dim=-1)
+class InitialConditionEquation(Equation):
+    """
+    定義初始條件方程，用於指定 phi (電勢) 和 A (磁向量勢) 的初始值。
+    適用於頻域或時域 Maxwell 方程的初始條件設定。
+    """
 
-            # 切向磁場分量
-            H_t1 = torch.cross(H, self.normal_vector.expand_as(H), dim=-1)
-            H_t2 = torch.cross(H, self.normal_vector.expand_as(H), dim=-1)
+    def __init__(self, phi_r_init=1.0, phi_i_init=0.0):
+        """
+        :param phi_r_init: 電勢的實部初始值
+        :param phi_i_init: 電勢的虛部初始值
+        :param A_r_init: 磁向量勢的實部初始值 (A_x_r, A_y_r, A_z_r)
+        :param A_i_init: 磁向量勢的虛部初始值 (A_x_i, A_y_i, A_z_i)
+        """
+        self.phi_r_init = phi_r_init
+        self.phi_i_init = phi_i_init
 
-            # 法向磁場連續性條件 (B_n1 = B_n2)
-            normal_condition_H = H_n1 - H_n2
+        def equation(input_, output_):
+            """
+            定義初始條件殘差。
+            """
+            # 提取輸出變量
+            phi_r = output_.extract(['phi_r'])
+            phi_i = output_.extract(['phi_i'])
 
-            # 切向磁場連續性條件 (1/μ * H_t1 = 1/μ * H_t2)
-            tangential_condition_H = torch.norm(H_t1 / self.mu_1 - H_t2 / self.mu_2, dim=-1)
 
-            ## 3️⃣ **返回損失函數**
+            # 計算殘差
+            residual_phi_r = phi_r - self.phi_r_init
+            residual_phi_i = phi_i - self.phi_i_init
+
+
+
+            # 返回殘差總和
             return (
-                normal_condition_E +
-                tangential_condition_E +
-                normal_condition_H +
-                tangential_condition_H
+                residual_phi_r**2 +
+                residual_phi_i**2
+
             )
 
         super().__init__(equation)
-
-
-
-
-
-
-import torch
-from pina.equation import Equation
-from pina.operators import grad
-
-
-class FrequencyChargeDensityEquation(Equation):
-    def __init__(self, frequencies=None, amplitudes=None, phases=None):
-        """
-        Frequency-based Charge Density Equation.
-
-        :param float epsilon_0: Permittivity of free space (F/m).
-        :param list frequencies: List of frequencies for each sinusoidal component.
-        :param list amplitudes: List of amplitudes for each sinusoidal component.
-        :param list phases: List of phase shifts for each sinusoidal component.
-        """
-        self.frequencies = frequencies if frequencies is not None else [1.0]
-        self.amplitudes = amplitudes if amplitudes is not None else [1.0]
-        self.phases = phases if phases is not None else [0.0]
-
-        def equation(input_, output_):
-            """
-            Define the divergence equation with frequency-based charge density.
-            """
-            # 提取電場分量
-            E_x = output_.extract(['E_x'])
-            E_y = output_.extract(['E_y'])
-            E_z = output_.extract(['E_z'])
-
-            # 提取時間變量 (t)
-            t = input_.extract(['t'])
-
-            # 分別計算每個電場分量的散度
-            div_E_x = grad(output_, input_,components=['E_x'], d=['x'])
-            div_E_y = grad(output_, input_,components=['E_y'], d=['y'])
-            div_E_z = grad(output_, input_,components=['E_z'], d=['z'])
-
-            # 將散度相加得到總散度
-            divergence_E = div_E_x + div_E_y + div_E_z
-
-            # 計算電荷密度 ρ(t) 使用頻率疊加
-            rho = torch.zeros_like(t, device=t.device)
-            for A, f, phi in zip(self.amplitudes, self.frequencies, self.phases):
-                rho += A * torch.sin(2 * torch.pi * f * t + phi)
-
-            # 返回殘差（左邊和右邊的差值）
-            return (divergence_E - rho)
-
-        super().__init__(equation)
-
-

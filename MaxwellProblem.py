@@ -1,98 +1,150 @@
-from matplotlib import pyplot as plt
-
-
+import torch
+from pina.equation import FixedValue
 from pina.problem import TimeDependentProblem, SpatialProblem
 from pina.geometry import CartesianDomain
 from pina.condition import Condition
-from pina.equation import Equation, FixedValue
 from sympy.physics.units import frequency
 
-from Locations import PolygonLocation
+from Equations import InitialConditionEquation
+from Locations import PolygonLocation, PortLocation
 from Materials import Material, MaterialHandler
-
-
-
-from pina.problem import TimeDependentProblem, SpatialProblem
-from pina.geometry import CartesianDomain
-from pina import Condition
-from Equations import Maxwell3DEquation, InterfaceEMFieldEquation, FrequencyChargeDensityEquation
 
 
 class Maxwell3D(TimeDependentProblem, SpatialProblem):
     """
-    Maxwell 3D Dynamic Electric Field Problem with MaterialHandler integration.
+    Maxwell 3D Electromagnetic Problem in the frequency domain using potentials (phi, A).
     """
-    # 定義輸出變量
-    output_variables = ['E_x', 'E_y', 'E_z', 'H_x', 'H_y', 'H_z']
 
-    # 定義空間和時間域
-    spatial_domain = CartesianDomain({'x': [-1, 1], 'y': [-1, 1], 'z': [0, 0.1]})
-    temporal_domain = CartesianDomain({'t': [0, 1e-3]})
+    # **1️⃣ 定義輸出變量**
+    output_variables = ['phi_r', 'phi_i']
+    # phi_r: 電勢的實部, phi_i: 電勢的虛部
+    # A_x_r, A_y_r, A_z_r: 磁向量勢的實部
+    # A_x_i, A_y_i, A_z_i: 磁向量勢的虛部
 
-    # 初始化條件為空字典
+    # **2️⃣ 預設範圍**
+    spatial_domain = {}
+    temporal_domain = {}
+
+    # **3️⃣ 初始化條件**
     conditions = {}
-
-    def __init__(self, material_handler):
+    def __init__(self, material_handler: MaterialHandler,
+                 port,
+                 spatial_domain,
+                 frequency_domain):
         """
         Initialize Maxwell 3D Problem with a MaterialHandler.
 
         :param material_handler: An instance of MaterialHandler managing multiple materials.
+        :param spatial_domain: Custom spatial domain {'x': [x_min, x_max], 'y': [y_min, y_max], 'z': [z_min, z_max]}.
+        :param frequency_domain: Custom frequency domain {'f': [f_min, f_max]}.
         """
         self.material_handler = material_handler
+        self.wave_port=port
 
-        # 建立動態條件
+        self.spatial_domain = CartesianDomain(spatial_domain)
+        self.frequency_domain = CartesianDomain(frequency_domain)
+
+        # **5️⃣ 動態條件**
         self._dynamic_conditions = self._build_conditions()
 
-        # 將動態條件合併到靜態條件中
+        # **6️⃣ 合併條件**
         self.conditions = {**self.__class__.conditions, **self._dynamic_conditions}
 
+        self.__class__.spatial_domain = CartesianDomain(spatial_domain)
+        self.__class__.temporal_domain = CartesianDomain(frequency_domain)
         super().__init__()
 
     def _build_conditions(self):
         """
-        Build dynamic conditions for Maxwell3D based on materials and their interfaces.
+        Build dynamic conditions for Maxwell3D using potentials (V, A) and material interfaces.
 
         :return: Dictionary containing problem conditions.
         """
         conditions = {}
 
-        # 應用 MaterialHandler 提供的條件
+        ## **7️⃣ 材料條件**
         material_conditions = self.material_handler.apply_equations()
         conditions.update(material_conditions)
 
+        ## **8️⃣ 初始條件**
+        for wave_port in self.wave_port:
+            conditions[f'initial_phi_port_{wave_port.name}'] = wave_port.create_condition()
 
-
-        conditions['initial'] = Condition(
-            location=CartesianDomain({'x': 0, 'y': 0, 'z': 0.05, 't': [0, 1e-3]}),
-            equation=FrequencyChargeDensityEquation(frequencies=[1e5], amplitudes=[1], phases=[0])
-        )
 
 
         return conditions
 
 
+    def print_information(self):
+        """
+        Print all locations (spatial and frequency ranges) associated with the materials.
+        """
+        print("📍 **All Locations in Maxwell3D Problem**")
+        print("Spatial Domain:", self.spatial_domain)
+        print("Frequency Domain:", self.frequency_domain)
+        print("-" * 50)
+
+        for i, material in enumerate(self.material_handler.materials):
+            print(f"🧱 Material {i + 1}: {material.name}")
+            print(f"   - Location Sample Mode: {material.location.sample_mode}")
+            print(f"   - Z Range: {material.location.z_range}")
+            print(f"   - Frequency Values: {material.location.f_values}")
+            print(f"   - Device: {material.location.device}")
+            print("   - Vertices:")
+            for vertex in material.location.vertices:
+                print(f"     {vertex}")
+            print("-" * 50)
+        """
+                Print all conditions defined in the Maxwell3D problem.
+                """
+        print("\n📍 **All Conditions in Maxwell3D Problem**")
+        print("-" * 50)
+
+        if not self.conditions:
+            print("⚠️ No conditions have been defined.")
+            return
+
+        for name, condition in self.conditions.items():
+            print(f"📝 Condition Name: {name}")
+            print(f"   - Location: {condition.location}")
+            print(f"   - Equation: {condition.equation}")
+            print("-" * 50)
 
 
 if __name__ == "__main__":
 
+    device = torch.device('cuda')
+    port = PortLocation((0, 0, 0.05), [1e9], device=device)
+    wave = InitialConditionEquation()
+    # 定義自定義範圍
+    custom_spatial_domain = {
+        'x': [-2, 2],
+        'y': [-2, 2],
+        'z': [0, 0.2]
+    }
+    custom_frequency_domain = {
+        'f': [1e7, 1e9]
+    }
 
     vertices_air = [
-        (0.0, 0.0),
-        (1.0, 0.0),
+        (-1.0, -1.0),
+        (1.0, -1.0),
         (1.0, 1.0),
-        (0.0, 1.0)
+        (-1.0, 1.0)
     ]
-    air_location = PolygonLocation(vertices_air, sample_mode='both')
+    air_location = PolygonLocation(vertices_air, f_values=[1e9], sample_mode='interior', device=device, z_range=(0.0, 0.1))
 
+    # 定義銅區域
     vertices_copper = [
-        (1.0, 0.0),
-        (2.0, 0.0),
+        (1.0, -1.0),
+        (2.0, -1.0),
         (2.0, 1.0),
         (1.0, 1.0)
     ]
-    copper_location = PolygonLocation(vertices_copper, sample_mode='both')
+    copper_location = PolygonLocation(vertices_copper, f_values=[1e9], sample_mode='edges', device=device,
+                                      z_range=(0.0, 0.1))
 
-
+    # 定義材料
     material_air = Material(
         name='Air',
         epsilon=8.85e-12,
@@ -103,115 +155,23 @@ if __name__ == "__main__":
 
     material_copper = Material(
         name='Copper',
-        epsilon=1.0e-9,
+        epsilon=1,
         sigma=5.8e7,
         mu=1.256e-6,
         location=copper_location
     )
 
-    # 創建 MaterialHandler
-    material_handler = MaterialHandler([material_air, material_copper])
+    # 建立 MaterialHandler
+    material_handler = MaterialHandler([material_air,material_copper])
 
-
-
-    problem = Maxwell3D(material_handler=material_handler)
-
-    # 確認條件
-    for name, condition in problem.conditions.items():
-        print(f"{name}: {condition}")
-
-
-
-
-    problem.discretise_domain(n=20, mode='grid', variables=['x','y','t'], locations='all')
-
-    # 檢查取樣點是否正確分配到每個條件
-    for key, points in problem.input_pts.items():
-        print(f"{key}: {points.shape if points is not None else 'None'}")
-
-
-
-    import matplotlib.pyplot as plt
-
-
-    def plot_samples_normals_equations(material, color, label, equation_label):
-        """
-        繪製取樣點、邊界法向量，並標示方程名稱。
-        """
-        points = material.location.sample(n=100, mode='random', variables=['x', 'y'])
-        vertices = material.location.vertices
-        normals = material.location.calculate_normal_vector()
-
-        # 繪製取樣點
-        plt.scatter(points[:, 0], points[:, 1], color=color, alpha=0.5, label=f'{label} Samples')
-
-        # 繪製多邊形邊界
-        for i in range(len(vertices)):
-            p1 = vertices[i]
-            p2 = vertices[(i + 1) % len(vertices)]
-            plt.plot([p1[0], p2[0]], [p1[1], p2[1]], color=color, linewidth=1)
-
-            # 中點計算
-            mid_point = ((p1[0] + p2[0]) / 2, (p1[1] + p2[1]) / 2)
-            normal = normals[i]
-
-            # 繪製法向量箭頭
-            plt.arrow(mid_point[0], mid_point[1],
-                      normal[0] * 0.1, normal[1] * 0.1,
-                      head_width=0.05, head_length=0.05, fc=color, ec=color)
-
-        # 在區域內部標示方程
-        center_x = sum(p[0] for p in vertices) / len(vertices)
-        center_y = sum(p[1] for p in vertices) / len(vertices)
-        plt.text(center_x, center_y, equation_label,
-                 fontsize=10, color=color, ha='center', va='center',
-                 bbox=dict(facecolor='white', edgecolor=color, boxstyle='round,pad=0.5'))
-
-
-    # 創建視覺化圖表
-    plt.figure(figsize=(12, 8))
-
-    # 空氣區域
-    plot_samples_normals_equations(
-        material_air,
-        color='skyblue',
-        label='Air',
-        equation_label='Maxwell2D\nσ=0, ε=8.85e-12, μ=1.256e-6'
+    # 創建 Maxwell3D 問題
+    problem = Maxwell3D(
+        material_handler=material_handler,
+        spatial_domain=custom_spatial_domain,
+        frequency_domain=custom_frequency_domain,
+        port=port,
+        wave=wave
     )
 
-    # 銅區域
-    plot_samples_normals_equations(
-        material_copper,
-        color='orange',
-        label='Copper',
-        equation_label='Maxwell2D\nσ=5.8e7, ε=1.0e-9, μ=1.256e-6'
-    )
-
-    # 介面
-    interface_vertices = [
-        (1.0, 0.0),
-        (1.0, 1.0)
-    ]
-    for i in range(len(interface_vertices) - 1):
-        p1 = interface_vertices[i]
-        p2 = interface_vertices[i + 1]
-        mid_point = ((p1[0] + p2[0]) / 2, (p1[1] + p2[1]) / 2)
-        plt.plot([p1[0], p2[0]], [p1[1], p2[1]], color='red', linewidth=2, label='Interface')
-        plt.arrow(mid_point[0], mid_point[1],
-                  0, 0.1,
-                  head_width=0.05, head_length=0.05, fc='red', ec='red')
-        plt.text(mid_point[0], mid_point[1] + 0.1, 'Interface\nε1 ≠ ε2',
-                 fontsize=10, color='red', ha='center', va='center',
-                 bbox=dict(facecolor='white', edgecolor='red', boxstyle='round,pad=0.5'))
-
-    # 設定圖表細節
-    plt.title('Material Samples, Normals, and Equations')
-    plt.xlabel('X-axis')
-    plt.ylabel('Y-axis')
-    plt.legend()
-    plt.grid(True)
-    plt.axis('equal')
-    plt.show()
-
-
-
+    problem.print_information()
+    problem.discretise_domain(n=1000, mode='random', variables=['x', 'y', 'z', 'f'], locations='all')

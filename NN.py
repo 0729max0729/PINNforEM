@@ -17,32 +17,28 @@ class MultiscaleFourierNet(nn.Module):
         self.embedding1 = FourierFeatureEmbedding(
             input_dimension=input_dimension,
             output_dimension=64,
-            sigma=0.1
+            sigma=1
         )
         self.embedding2 = FourierFeatureEmbedding(
             input_dimension=input_dimension,
-            output_dimension=64,
-            sigma=1
+            output_dimension=256,
+            sigma=1e3
         )
         self.embedding3 = FourierFeatureEmbedding(
             input_dimension=input_dimension,
-            output_dimension=64,
-            sigma=10
+            output_dimension=256,
+            sigma=1e4
         )
         self.embedding4 = FourierFeatureEmbedding(
             input_dimension=input_dimension,
-            output_dimension=64,
-            sigma=20e2
+            output_dimension=256,
+            sigma=1e5
         )
         # 前饋神經網絡
         self.layers = nn.Sequential(
-            nn.Linear(256, 512),  # 64 + 64 = 128
-            nn.ReLU(),
-            nn.Linear(512, 1024),
-            nn.ReLU(),
-            nn.Linear(1024, 2048),
-            nn.ReLU(),
-            nn.Linear(2048, output_dimension)  # 輸出映射到物理變量數量
+
+            nn.Linear(64, 128),
+            nn.Linear(128, output_dimension)  # 輸出映射到物理變量數量
         )
 
     def forward(self, x):
@@ -57,7 +53,7 @@ class MultiscaleFourierNet(nn.Module):
         e3 = self.embedding3(x)  # 高频嵌入
         e4 = self.embedding4(x)  # 高频嵌入
         # 拼接特徵
-        combined = torch.cat([e1, e2, e3, e4], dim=-1)
+        combined = torch.cat([e1], dim=-1)
 
         # 通過神經網絡
         output = self.layers(combined)
@@ -97,14 +93,12 @@ class SinCosFeature3D(torch.nn.Module):
         x_coord = x.extract(['x'])
         y_coord = x.extract(['y'])
         z_coord = x.extract(['z'])
-        t_coord = x.extract(['t'])
 
         feature = (
                 self.amplitude *
                 torch.sin(self.alpha * x_coord + self.phi_x) *
                 torch.sin(self.beta * y_coord + self.phi_y) *
-                torch.sin(self.gamma * z_coord + self.phi_z) *
-                torch.cos(self.delta * t_coord + self.phi_t)
+                torch.sin(self.gamma * z_coord + self.phi_z)
         )
         return LabelTensor(feature, ['A*sin(a*x+phi_x)sin(b*y+phi_y)sin(c*z+phi_z)cos(d*t+phi_t)'])
 
