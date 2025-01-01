@@ -171,15 +171,13 @@ class MaterialHandler:
 
         # **1️⃣ 處理內部條件**
         for material in self.materials:
-            if material.location.sample_mode in ['interior', 'both']:
+            if material.location.sample_mode in ['interior', 'outer']:
                 if material.sigma>1:
                     conditions[f'Conductor_{material.name}'] = Condition(
                         location=material.location,
                         equation=ConductorPotentialEquation(
                             sigma=material.sigma,
-                            epsilon=material.epsilon,
-                            mu=material.mu,
-                            tand=material.tand
+                            mu=material.mu
                         )
                     )
                 else:

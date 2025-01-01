@@ -41,9 +41,9 @@ class ConductorPotentialEquation(Equation):
             )
 
             # 合併殘差
-            residual = residual_r**2 + residual_i**2
+            residual = torch.sqrt(residual_r**2 + residual_i**2)
 
-            return residual/1e5
+            return residual/torch.sqrt(omega)
 
         super().__init__(equation)
 
@@ -77,18 +77,17 @@ class DielectricPotentialEquation(Equation):
 
             # 方程殘差（實部）
             residual_r = (
-                laplacian(output_, input_,components=['phi_r'],d=['x','y','z']) + self.mu * self.epsilon_real * omega**2 * phi_r
-                - self.mu * self.epsilon_imag * omega**2 * phi_i
+                laplacian(output_, input_,components=['phi_r'],d=['x','y','z']) + (self.mu * self.epsilon_real * (omega**2) * phi_r)
+                - (self.mu * self.epsilon_imag * omega**2 * phi_i)
             )
 
             # 方程殘差（虛部）
             residual_i = (
-                laplacian(output_, input_,components=['phi_i'],d=['x','y','z']) + self.mu * self.epsilon_real * omega**2 * phi_i
-                + self.mu * self.epsilon_imag * omega**2 * phi_r
+                laplacian(output_, input_,components=['phi_i'],d=['x','y','z']) + (self.mu * self.epsilon_real * (omega**2) * phi_i)
+                + (self.mu * self.epsilon_imag * omega**2 * phi_r)
             )
-
             # 合併殘差
-            residual = residual_r**2 + residual_i**2
+            residual = torch.sqrt(residual_r**2 + residual_i**2)
 
             return residual
 
@@ -125,10 +124,8 @@ class InitialConditionEquation(Equation):
             residual_phi_r = phi_r - self.phi_r_init
             residual_phi_i = phi_i - self.phi_i_init
 
-
-
             # 返回殘差總和
-            return (
+            return torch.sqrt(
                 residual_phi_r**2 +
                 residual_phi_i**2
 

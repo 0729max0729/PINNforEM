@@ -1,6 +1,7 @@
 import torch
 from pina.geometry import Location
 from pina.utils import LabelTensor
+from sympy.matrices.expressions.blockmatrix import bounds
 
 
 class PolygonLocation(Location):
@@ -9,7 +10,7 @@ class PolygonLocation(Location):
     including normal vectors in both XY plane and Z direction, and frequency domain support.
     """
 
-    def __init__(self, vertices, f_values, sample_mode='interior', z_range=(0, 1), device='cpu'):
+    def __init__(self, vertices,bound, f_values, sample_mode='interior', z_range=(0, 1), device='cpu'):
         """
         :param vertices: List of (x, y) tuples representing polygon vertices (base).
         :param sample_mode: Sampling mode ('interior', 'edges', 'both').
@@ -19,13 +20,13 @@ class PolygonLocation(Location):
         """
         super().__init__()
         self.vertices = self._ensure_counter_clockwise(vertices)
-        if sample_mode not in ['interior', 'edges', 'both']:
+        if sample_mode not in ['interior', 'edges', 'outer']:
             raise ValueError("sample_mode must be 'interior', 'edges', or 'both'")
         self.sample_mode = sample_mode
         self.z_range = z_range  # Z 軸範圍
         self.f_values = f_values  # 頻率範圍
         self.device = device
-
+        self.bound=bound
     def _ensure_counter_clockwise(self, vertices):
         """
         Ensure the vertices are ordered counter-clockwise.
@@ -153,7 +154,23 @@ class PolygonLocation(Location):
 
         return interior_points
 
+    def _sample_outer(self, n):
+        """
+        Sample points inside the polygon, extended into the Z-axis.
+        """
+        interior_points = []
+        bbox_x = [self.bound['x'][0], self.bound['x'][1]]
+        bbox_y = [self.bound['y'][0], self.bound['y'][1]]
 
+        while len(interior_points) < n:
+            x = torch.rand(1) * (bbox_x[1] - bbox_x[0]) + bbox_x[0]
+            y = torch.rand(1) * (bbox_y[1] - bbox_y[0]) + bbox_y[0]
+            z = torch.rand(1).item() * (self.z_range[1] - self.z_range[0]) + self.z_range[0]
+            point = torch.tensor([x.item(), y.item()], device=self.device)
+            if not(self.is_inside([point])[0]):
+                interior_points.append([x.item(), y.item(), z])
+
+        return interior_points
 
     def calculate_normal_vector(self):
         """
@@ -203,10 +220,8 @@ class PolygonLocation(Location):
             sampled_points = self._sample_interior(n)
         elif self.sample_mode == 'edges':
             sampled_points = self._sample_on_edges(n)
-        elif self.sample_mode == 'both':
-            edge_points = self._sample_on_edges(n // 2)
-            interior_points = self._sample_interior(n // 2)
-            sampled_points = edge_points + interior_points
+        elif self.sample_mode == 'outer':
+            sampled_points = self._sample_outer(n)
 
         # 添加頻率維度取樣
         f_values = torch.tensor(self.f_values,device=self.device)
@@ -271,9 +286,13 @@ if __name__ == "__main__":
         (1.0, 0.0),
         (0.0, 1.0)
     ]
-
+    bound = {
+        'x': [-1, 2],
+        'y': [-1, 1],
+        'z': [0, 0.1]
+    }
     # 創建 PolygonLocation 物件
-    polygon = PolygonLocation(vertices, f_values=[1e9], sample_mode='interior', z_range=(0.0, 1.0))
+    polygon = PolygonLocation(vertices,bound, f_values=[1e9], sample_mode='outer', z_range=(0.0, 1.0))
 
     # 執行邊緣取樣
     edge_points = polygon.sample(1500)

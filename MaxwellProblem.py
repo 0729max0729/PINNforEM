@@ -28,7 +28,7 @@ class Maxwell3D(TimeDependentProblem, SpatialProblem):
     # **3️⃣ 初始化條件**
     conditions = {}
     def __init__(self, material_handler: MaterialHandler,
-                 port,
+                 ports,
                  spatial_domain,
                  frequency_domain):
         """
@@ -39,7 +39,7 @@ class Maxwell3D(TimeDependentProblem, SpatialProblem):
         :param frequency_domain: Custom frequency domain {'f': [f_min, f_max]}.
         """
         self.material_handler = material_handler
-        self.wave_port=port
+        self.wave_port=ports
 
         self.spatial_domain = CartesianDomain(spatial_domain)
         self.frequency_domain = CartesianDomain(frequency_domain)
