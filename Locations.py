@@ -12,7 +12,7 @@ class PolygonLocation(Location):
     including normal vectors in both XY plane and Z direction, and frequency domain support.
     """
 
-    def __init__(self, vertices, bound, f_values, sample_mode='interior', z_range=(0, 1), device='cpu'):
+    def __init__(self, vertices, bound, f_values, sample_mode='interior', z_range=(0, 1), device='cpu',scale=1e-6):
         """
         :param vertices: List of (x, y) tuples representing polygon vertices (base).
         :param sample_mode: Sampling mode ('interior', 'edges', 'both').
@@ -21,7 +21,7 @@ class PolygonLocation(Location):
         :param device: Device for tensor computations ('cpu' or 'cuda').
         """
         super().__init__()
-        self.vertices = self._ensure_counter_clockwise(vertices)
+
         if sample_mode not in ['interior', 'edges', 'outer']:
             raise ValueError("sample_mode must be 'interior', 'edges', or 'both'")
         self.sample_mode = sample_mode
@@ -29,7 +29,8 @@ class PolygonLocation(Location):
         self.f_values = f_values  # 頻率範圍
         self.device = device
         self.bound = bound
-
+        self.scale = scale
+        self.vertices = self._ensure_counter_clockwise(vertices)
     def _ensure_counter_clockwise(self, vertices):
         """
         Ensure the vertices are ordered counter-clockwise.
@@ -38,7 +39,7 @@ class PolygonLocation(Location):
         for i in range(len(vertices)):
             x1, y1 = vertices[i]
             x2, y2 = vertices[(i + 1) % len(vertices)]
-            area += (x2 - x1) * (y2 + y1)
+            area += (x2/self.scale - x1/self.scale) * (y2/self.scale + y1/self.scale)
 
         if area > 0:  # If area is positive, the vertices are clockwise
             vertices.reverse()
@@ -140,49 +141,16 @@ class PolygonLocation(Location):
 
     def _sample_interior(self, n):
         """
-        Sample points inside the polygon using Voronoi Diagram.
+        Sample points inside the polygon, extended into the Z-axis.
         """
         interior_points = []
         bbox_x = [min(p[0] for p in self.vertices), max(p[0] for p in self.vertices)]
         bbox_y = [min(p[1] for p in self.vertices), max(p[1] for p in self.vertices)]
-        z_min, z_max = self.z_range
 
-        # Step 1: 隨機生成種子點
-        seed_x = torch.rand(n) * (bbox_x[1] - bbox_x[0]) + bbox_x[0]
-        seed_y = torch.rand(n) * (bbox_y[1] - bbox_y[0]) + bbox_y[0]
-        seeds = np.column_stack((seed_x.numpy(), seed_y.numpy()))
-
-        # Step 2: 構建 Voronoi 圖
-        vor = Voronoi(seeds)
-
-        # Step 3: 在每個 Voronoi 區域內生成隨機點
-        for region_index in vor.regions:
-            if not region_index or -1 in region_index:
-                continue  # 跳過無效區域（包含無限點）
-
-            region = [vor.vertices[i] for i in region_index]
-            if len(region) < 3:
-                continue  # 跳過無效區域
-
-            # 隨機選擇區域內一個點
-            region_polygon = np.array(region)
-            min_x, min_y = np.min(region_polygon, axis=0)
-            max_x, max_y = np.max(region_polygon, axis=0)
-
-            x = torch.rand(1).item() * (max_x - min_x) + min_x
-            y = torch.rand(1).item() * (max_y - min_y) + min_y
-            z = torch.rand(1).item() * (z_max - z_min) + z_min
-
-            point = torch.tensor([x, y], device=self.device)
-
-            if self.is_inside([point])[0]:
-                interior_points.append([x, y, z])
-
-        # 若未達到所需點數，隨機補充
         while len(interior_points) < n:
             x = torch.rand(1) * (bbox_x[1] - bbox_x[0]) + bbox_x[0]
             y = torch.rand(1) * (bbox_y[1] - bbox_y[0]) + bbox_y[0]
-            z = torch.rand(1).item() * (z_max - z_min) + z_min
+            z = torch.rand(1).item() * (self.z_range[1]/self.scale - self.z_range[0]/self.scale) + self.z_range[0]/self.scale
             point = torch.tensor([x.item(), y.item()], device=self.device)
             if self.is_inside([point])[0]:
                 interior_points.append([x.item(), y.item(), z])
@@ -191,54 +159,21 @@ class PolygonLocation(Location):
 
     def _sample_outer(self, n):
         """
-        Sample points outside the polygon, extended into the Z-axis using Voronoi Diagram.
+        Sample points inside the polygon, extended into the Z-axis.
         """
-        outer_points = []
-        bbox_x = [self.bound['x'][0], self.bound['x'][1]]
-        bbox_y = [self.bound['y'][0], self.bound['y'][1]]
-        z_min, z_max = self.z_range
+        interior_points = []
+        bbox_x = [self.bound['x'][0]/self.scale, self.bound['x'][1]/self.scale]
+        bbox_y = [self.bound['y'][0]/self.scale, self.bound['y'][1]/self.scale]
 
-        # Step 1: 生成種子點
-        seed_x = torch.rand(n) * (bbox_x[1] - bbox_x[0]) + bbox_x[0]
-        seed_y = torch.rand(n) * (bbox_y[1] - bbox_y[0]) + bbox_y[0]
-        seeds = np.column_stack((seed_x.numpy(), seed_y.numpy()))
-
-        # Step 2: 構建 Voronoi 圖
-        vor = Voronoi(seeds)
-
-        # Step 3: 遍歷 Voronoi 區域，篩選外部區域
-        for region_index in vor.regions:
-            if not region_index or -1 in region_index:
-                continue  # 跳過無效區域（無限區域或邊界區域）
-
-            region = [vor.vertices[i] for i in region_index]
-            if len(region) < 3:
-                continue  # 略過非有效區域
-
-            # 獲取區域的邊界框
-            region_polygon = np.array(region)
-            min_x, min_y = np.min(region_polygon, axis=0)
-            max_x, max_y = np.max(region_polygon, axis=0)
-
-            # 在該區域中生成隨機點
-            x = torch.rand(1).item() * (max_x - min_x) + min_x
-            y = torch.rand(1).item() * (max_y - min_y) + min_y
-            z = torch.rand(1).item() * (z_max - z_min) + z_min
-
-            point = torch.tensor([x, y], device=self.device)
-            if not self.is_inside([point])[0]:  # 檢查點是否在多邊形外部
-                outer_points.append([x, y, z])
-
-        # Step 4: 補充點，確保達到 n 個
-        while len(outer_points) < n:
+        while len(interior_points) < n:
             x = torch.rand(1) * (bbox_x[1] - bbox_x[0]) + bbox_x[0]
             y = torch.rand(1) * (bbox_y[1] - bbox_y[0]) + bbox_y[0]
-            z = torch.rand(1).item() * (z_max - z_min) + z_min
+            z = torch.rand(1).item() * (self.z_range[1]/self.scale - self.z_range[0]/self.scale) + self.z_range[0]/self.scale
             point = torch.tensor([x.item(), y.item()], device=self.device)
-            if not self.is_inside([point])[0]:
-                outer_points.append([x.item(), y.item(), z])
+            if not(self.is_inside([point])[0]):
+                interior_points.append([x.item(), y.item(), z])
 
-        return outer_points
+        return interior_points
 
     def calculate_normal_vector(self):
         """
@@ -294,7 +229,7 @@ class PolygonLocation(Location):
 
         # 合併 x, y, z, f
         sampled_points_with_f = [
-            (point[0], point[1], point[2], f.item()) for point in sampled_points for f in f_values
+            (point[0]*self.scale, point[1]*self.scale, point[2]*self.scale, f.item()) for point in sampled_points for f in f_values
         ]
 
         return LabelTensor(torch.tensor(sampled_points_with_f, dtype=torch.float32, device=self.device),
@@ -348,15 +283,17 @@ class PortLocation(Location):
 
 if __name__ == "__main__":
     # 定義 XY 平面頂點
+    scale = 1e-6
     vertices = [
-        (0.0, 0.0),
-        (1.0, 0.0),
-        (0.0, 1.0)
+        (1.0 * scale, -1.0 * scale),
+        (-1.0 * scale, -1.0 * scale),
+        (-1.0 * scale, 1.0 * scale),
+        (1.0 * scale, 1.0 * scale)
     ]
     bound = {
-        'x': [-1, 2],
-        'y': [-1, 1],
-        'z': [0, 0.1]
+        'x': [-1 * scale, 2 * scale],
+        'y': [-1 * scale, 1 * scale],
+        'z': [0 * scale, 0.1 * scale]
     }
     # 創建 PolygonLocation 物件
     polygon = PolygonLocation(vertices, bound, f_values=[1e9], sample_mode='outer', z_range=(0.0, 1.0))
@@ -373,12 +310,11 @@ if __name__ == "__main__":
     import matplotlib.pyplot as plt
 
     fig = plt.figure(figsize=(10, 8))
-    ax = fig.add_subplot(111, projection='3d')
+    ax = fig.add_subplot(111)
 
-    ax.scatter(edge_points[:, 0], edge_points[:, 1], edge_points[:, 2], c='b', marker='o')
+    ax.scatter(edge_points[:, 0], edge_points[:, 1], c='b', marker='o',alpha=0.5)
 
     ax.set_title('3D Edge Sampling: XY Planes and Faces')
     ax.set_xlabel('X-axis')
     ax.set_ylabel('Y-axis')
-    ax.set_zlabel('Z-axis')
     plt.show()

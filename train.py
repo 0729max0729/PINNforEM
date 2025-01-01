@@ -14,8 +14,8 @@ from NN import TimeSpaceNet
 from Ports import WavePort
 
 device=torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-f=[1e9]
-scale=1e-6
+f=[1]
+scale=1
 # 定義自定義範圍
 custom_spatial_domain = {
     'x': [-2*scale, 2*scale],
@@ -122,7 +122,7 @@ pinn = PINN(
     problem=problem,  # 3D Maxwell 問題
     model=model,
     extra_features=[],
-    optimizer_kwargs={'lr': 1e-2},
+    optimizer_kwargs={'lr': 1e-3},
     scheduler=torch.optim.lr_scheduler.MultiStepLR,
     scheduler_kwargs={'milestones' : [200, 500, 900, 1200], 'gamma':0.9}
 )
@@ -139,7 +139,7 @@ checkpoint_callback = ModelCheckpoint(
 # 创建 Trainer 实例，并传入回调函数
 trainer = Trainer(
     solver=pinn,
-    max_epochs=2000,
+    max_epochs=800,
     callbacks=[checkpoint_callback],
     accelerator='gpu' if torch.cuda.is_available() else 'cpu',
     enable_model_summary=False
