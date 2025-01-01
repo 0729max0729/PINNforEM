@@ -359,7 +359,7 @@ if __name__ == "__main__":
         'z': [0, 0.1]
     }
     # 創建 PolygonLocation 物件
-    polygon = PolygonLocation(vertices, bound, f_values=[1e9], sample_mode='outer', z_range=(0.0, 1.0))
+    polygon = PolygonLocation(vertices, bound, f_values=[1e9], sample_mode='interior', z_range=(0.0, 1.0))
 
     # 執行邊緣取樣
     edge_points = polygon.sample(1500)
