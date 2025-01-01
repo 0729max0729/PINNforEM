@@ -12,7 +12,7 @@ class PolygonLocation(Location):
     including normal vectors in both XY plane and Z direction, and frequency domain support.
     """
 
-    def __init__(self, vertices, bound, f_values, sample_mode='interior', z_range=(0, 1), device='cpu',scale=1e-6):
+    def __init__(self, vertices, bound, f_values, sample_mode='interior', z_range=(0, 1), device='cpu'):
         """
         :param vertices: List of (x, y) tuples representing polygon vertices (base).
         :param sample_mode: Sampling mode ('interior', 'edges', 'both').
@@ -21,7 +21,7 @@ class PolygonLocation(Location):
         :param device: Device for tensor computations ('cpu' or 'cuda').
         """
         super().__init__()
-
+        self.vertices = self._ensure_counter_clockwise(vertices)
         if sample_mode not in ['interior', 'edges', 'outer']:
             raise ValueError("sample_mode must be 'interior', 'edges', or 'both'")
         self.sample_mode = sample_mode
@@ -29,8 +29,7 @@ class PolygonLocation(Location):
         self.f_values = f_values  # 頻率範圍
         self.device = device
         self.bound = bound
-        self.scale = scale
-        self.vertices = self._ensure_counter_clockwise(vertices)
+
     def _ensure_counter_clockwise(self, vertices):
         """
         Ensure the vertices are ordered counter-clockwise.
@@ -39,7 +38,7 @@ class PolygonLocation(Location):
         for i in range(len(vertices)):
             x1, y1 = vertices[i]
             x2, y2 = vertices[(i + 1) % len(vertices)]
-            area += (x2/self.scale - x1/self.scale) * (y2/self.scale + y1/self.scale)
+            area += (x2 - x1) * (y2 + y1)
 
         if area > 0:  # If area is positive, the vertices are clockwise
             vertices.reverse()
@@ -51,7 +50,7 @@ class PolygonLocation(Location):
         If the polygon is defined by edges only, checks if points lie on the edges.
         """
         result = []
-        epsilon = 1e-6  # 浮點數誤差閾值
+        epsilon = 0  # 浮點數誤差閾值
 
         for point in points:
             x, y = point[:2]  # 只考慮 X, Y 平面
@@ -150,7 +149,7 @@ class PolygonLocation(Location):
         while len(interior_points) < n:
             x = torch.rand(1) * (bbox_x[1] - bbox_x[0]) + bbox_x[0]
             y = torch.rand(1) * (bbox_y[1] - bbox_y[0]) + bbox_y[0]
-            z = torch.rand(1).item() * (self.z_range[1]/self.scale - self.z_range[0]/self.scale) + self.z_range[0]/self.scale
+            z = torch.rand(1).item() * (self.z_range[1] - self.z_range[0]) + self.z_range[0]
             point = torch.tensor([x.item(), y.item()], device=self.device)
             if self.is_inside([point])[0]:
                 interior_points.append([x.item(), y.item(), z])
@@ -162,13 +161,13 @@ class PolygonLocation(Location):
         Sample points inside the polygon, extended into the Z-axis.
         """
         interior_points = []
-        bbox_x = [self.bound['x'][0]/self.scale, self.bound['x'][1]/self.scale]
-        bbox_y = [self.bound['y'][0]/self.scale, self.bound['y'][1]/self.scale]
+        bbox_x = [self.bound['x'][0], self.bound['x'][1]]
+        bbox_y = [self.bound['y'][0], self.bound['y'][1]]
 
         while len(interior_points) < n:
             x = torch.rand(1) * (bbox_x[1] - bbox_x[0]) + bbox_x[0]
             y = torch.rand(1) * (bbox_y[1] - bbox_y[0]) + bbox_y[0]
-            z = torch.rand(1).item() * (self.z_range[1]/self.scale - self.z_range[0]/self.scale) + self.z_range[0]/self.scale
+            z = torch.rand(1).item() * (self.z_range[1] - self.z_range[0]) + self.z_range[0]
             point = torch.tensor([x.item(), y.item()], device=self.device)
             if not(self.is_inside([point])[0]):
                 interior_points.append([x.item(), y.item(), z])
@@ -229,7 +228,7 @@ class PolygonLocation(Location):
 
         # 合併 x, y, z, f
         sampled_points_with_f = [
-            (point[0]*self.scale, point[1]*self.scale, point[2]*self.scale, f.item()) for point in sampled_points for f in f_values
+            (point[0], point[1], point[2], f.item()) for point in sampled_points for f in f_values
         ]
 
         return LabelTensor(torch.tensor(sampled_points_with_f, dtype=torch.float32, device=self.device),
@@ -296,7 +295,7 @@ if __name__ == "__main__":
         'z': [0 * scale, 0.1 * scale]
     }
     # 創建 PolygonLocation 物件
-    polygon = PolygonLocation(vertices, bound, f_values=[1e9], sample_mode='outer', z_range=(0.0 * scale, 1.0 * scale))
+    polygon = PolygonLocation(vertices, bound, f_values=[1e9], sample_mode='interior', z_range=(0.0, 1.0))
 
     # 執行邊緣取樣
     edge_points = polygon.sample(1500)

@@ -14,8 +14,8 @@ from NN import TimeSpaceNet
 from Ports import WavePort
 
 device=torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-f=[1]
-scale=1
+f=[1e9]
+scale=1e-5
 # 定義自定義範圍
 custom_spatial_domain = {
     'x': [-2*scale, 2*scale],
