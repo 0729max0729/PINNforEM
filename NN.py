@@ -61,9 +61,9 @@ class FusionNet(nn.Module):
 class TimeSpaceNet(nn.Module):
     def __init__(self):
         super(TimeSpaceNet, self).__init__()
-        self.time_net = TimeNet(output_dim=16)
+        self.time_net = TimeNet(output_dim=1)
         self.space_net = SpaceNet(output_dim=32)
-        self.fusion_net = FusionNet(time_feature_dim=16, space_feature_dim=32)
+        self.fusion_net = FusionNet(time_feature_dim=1, space_feature_dim=32)
 
     def forward(self, input_tensor: LabelTensor):
         """

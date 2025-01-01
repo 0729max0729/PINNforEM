@@ -93,9 +93,9 @@ problem.print_information()
 
 
 # 定義神經網路模型
-model = TimeSpaceNet().to(device)
+#model = TimeSpaceNet().to(device)
 
-'''
+
 # make model
 class SIREN(torch.nn.Module):
     def forward(self, x):
@@ -106,7 +106,7 @@ model = FeedForward(
     output_dimensions=len(problem.output_variables),
     input_dimensions=len(problem.input_variables)
 ).to(device)
-'''
+
 
 
 
@@ -122,7 +122,7 @@ pinn = PINN(
     problem=problem,  # 3D Maxwell 問題
     model=model,
     extra_features=[],
-    optimizer_kwargs={'lr': 1e-3},
+    optimizer_kwargs={'lr': 1e-2},
     scheduler=torch.optim.lr_scheduler.MultiStepLR,
     scheduler_kwargs={'milestones' : [200, 500, 900, 1200], 'gamma':0.9}
 )

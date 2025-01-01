@@ -43,7 +43,7 @@ class ConductorPotentialEquation(Equation):
             # 合併殘差
             residual = torch.sqrt(residual_r**2 + residual_i**2)
 
-            return residual/omega/1e5
+            return residual/omega
 
         super().__init__(equation)
 
