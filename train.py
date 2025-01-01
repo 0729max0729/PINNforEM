@@ -141,8 +141,8 @@ trainer = Trainer(
     solver=pinn,
     max_epochs=2000,
     callbacks=[checkpoint_callback],
-    accelerator='gpu',
-    enable_model_summary=True
+    accelerator='gpu' if torch.cuda.is_available() else 'cpu',
+    enable_model_summary=False
 )
 
 if __name__ == "__main__":

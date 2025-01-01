@@ -1,7 +1,9 @@
+import numpy as np
 import torch
 from pina.geometry import Location
 from pina.utils import LabelTensor
 from sympy.matrices.expressions.blockmatrix import bounds
+from scipy.spatial import Voronoi, voronoi_plot_2d
 
 
 class PolygonLocation(Location):
@@ -10,7 +12,7 @@ class PolygonLocation(Location):
     including normal vectors in both XY plane and Z direction, and frequency domain support.
     """
 
-    def __init__(self, vertices,bound, f_values, sample_mode='interior', z_range=(0, 1), device='cpu'):
+    def __init__(self, vertices, bound, f_values, sample_mode='interior', z_range=(0, 1), device='cpu'):
         """
         :param vertices: List of (x, y) tuples representing polygon vertices (base).
         :param sample_mode: Sampling mode ('interior', 'edges', 'both').
@@ -26,7 +28,8 @@ class PolygonLocation(Location):
         self.z_range = z_range  # Z 軸範圍
         self.f_values = f_values  # 頻率範圍
         self.device = device
-        self.bound=bound
+        self.bound = bound
+
     def _ensure_counter_clockwise(self, vertices):
         """
         Ensure the vertices are ordered counter-clockwise.
@@ -115,7 +118,6 @@ class PolygonLocation(Location):
                 z = torch.rand(1).item() * (self.z_range[1] - self.z_range[0]) + self.z_range[0]
                 edge_points.append([x, y, z])
 
-
         ## 1️⃣ **在 XY 平面 (z_min 和 z_max) 的內部均勻取樣**
         for z in [self.z_range[0], self.z_range[1]]:
             bbox_x = [min(p[0] for p in self.vertices), max(p[0] for p in self.vertices)]
@@ -123,7 +125,7 @@ class PolygonLocation(Location):
 
             sampled_points_xy = 0
             attempts = 0
-            max_attempts=99999   # 最大嘗試次數，防止死循環
+            max_attempts = 99999  # 最大嘗試次數，防止死循環
             while sampled_points_xy < num_points_per_section and attempts < max_attempts:
                 x = torch.rand(1).item() * (bbox_x[1] - bbox_x[0]) + bbox_x[0]
                 y = torch.rand(1).item() * (bbox_y[1] - bbox_y[0]) + bbox_y[0]
@@ -138,16 +140,49 @@ class PolygonLocation(Location):
 
     def _sample_interior(self, n):
         """
-        Sample points inside the polygon, extended into the Z-axis.
+        Sample points inside the polygon using Voronoi Diagram.
         """
         interior_points = []
         bbox_x = [min(p[0] for p in self.vertices), max(p[0] for p in self.vertices)]
         bbox_y = [min(p[1] for p in self.vertices), max(p[1] for p in self.vertices)]
+        z_min, z_max = self.z_range
 
+        # Step 1: 隨機生成種子點
+        seed_x = torch.rand(n) * (bbox_x[1] - bbox_x[0]) + bbox_x[0]
+        seed_y = torch.rand(n) * (bbox_y[1] - bbox_y[0]) + bbox_y[0]
+        seeds = np.column_stack((seed_x.numpy(), seed_y.numpy()))
+
+        # Step 2: 構建 Voronoi 圖
+        vor = Voronoi(seeds)
+
+        # Step 3: 在每個 Voronoi 區域內生成隨機點
+        for region_index in vor.regions:
+            if not region_index or -1 in region_index:
+                continue  # 跳過無效區域（包含無限點）
+
+            region = [vor.vertices[i] for i in region_index]
+            if len(region) < 3:
+                continue  # 跳過無效區域
+
+            # 隨機選擇區域內一個點
+            region_polygon = np.array(region)
+            min_x, min_y = np.min(region_polygon, axis=0)
+            max_x, max_y = np.max(region_polygon, axis=0)
+
+            x = torch.rand(1).item() * (max_x - min_x) + min_x
+            y = torch.rand(1).item() * (max_y - min_y) + min_y
+            z = torch.rand(1).item() * (z_max - z_min) + z_min
+
+            point = torch.tensor([x, y], device=self.device)
+
+            if self.is_inside([point])[0]:
+                interior_points.append([x, y, z])
+
+        # 若未達到所需點數，隨機補充
         while len(interior_points) < n:
             x = torch.rand(1) * (bbox_x[1] - bbox_x[0]) + bbox_x[0]
             y = torch.rand(1) * (bbox_y[1] - bbox_y[0]) + bbox_y[0]
-            z = torch.rand(1).item() * (self.z_range[1] - self.z_range[0]) + self.z_range[0]
+            z = torch.rand(1).item() * (z_max - z_min) + z_min
             point = torch.tensor([x.item(), y.item()], device=self.device)
             if self.is_inside([point])[0]:
                 interior_points.append([x.item(), y.item(), z])
@@ -156,21 +191,54 @@ class PolygonLocation(Location):
 
     def _sample_outer(self, n):
         """
-        Sample points inside the polygon, extended into the Z-axis.
+        Sample points outside the polygon, extended into the Z-axis using Voronoi Diagram.
         """
-        interior_points = []
+        outer_points = []
         bbox_x = [self.bound['x'][0], self.bound['x'][1]]
         bbox_y = [self.bound['y'][0], self.bound['y'][1]]
+        z_min, z_max = self.z_range
 
-        while len(interior_points) < n:
+        # Step 1: 生成種子點
+        seed_x = torch.rand(n) * (bbox_x[1] - bbox_x[0]) + bbox_x[0]
+        seed_y = torch.rand(n) * (bbox_y[1] - bbox_y[0]) + bbox_y[0]
+        seeds = np.column_stack((seed_x.numpy(), seed_y.numpy()))
+
+        # Step 2: 構建 Voronoi 圖
+        vor = Voronoi(seeds)
+
+        # Step 3: 遍歷 Voronoi 區域，篩選外部區域
+        for region_index in vor.regions:
+            if not region_index or -1 in region_index:
+                continue  # 跳過無效區域（無限區域或邊界區域）
+
+            region = [vor.vertices[i] for i in region_index]
+            if len(region) < 3:
+                continue  # 略過非有效區域
+
+            # 獲取區域的邊界框
+            region_polygon = np.array(region)
+            min_x, min_y = np.min(region_polygon, axis=0)
+            max_x, max_y = np.max(region_polygon, axis=0)
+
+            # 在該區域中生成隨機點
+            x = torch.rand(1).item() * (max_x - min_x) + min_x
+            y = torch.rand(1).item() * (max_y - min_y) + min_y
+            z = torch.rand(1).item() * (z_max - z_min) + z_min
+
+            point = torch.tensor([x, y], device=self.device)
+            if not self.is_inside([point])[0]:  # 檢查點是否在多邊形外部
+                outer_points.append([x, y, z])
+
+        # Step 4: 補充點，確保達到 n 個
+        while len(outer_points) < n:
             x = torch.rand(1) * (bbox_x[1] - bbox_x[0]) + bbox_x[0]
             y = torch.rand(1) * (bbox_y[1] - bbox_y[0]) + bbox_y[0]
-            z = torch.rand(1).item() * (self.z_range[1] - self.z_range[0]) + self.z_range[0]
+            z = torch.rand(1).item() * (z_max - z_min) + z_min
             point = torch.tensor([x.item(), y.item()], device=self.device)
-            if not(self.is_inside([point])[0]):
-                interior_points.append([x.item(), y.item(), z])
+            if not self.is_inside([point])[0]:
+                outer_points.append([x.item(), y.item(), z])
 
-        return interior_points
+        return outer_points
 
     def calculate_normal_vector(self):
         """
@@ -183,9 +251,9 @@ class PolygonLocation(Location):
             # 計算 XY 平面上的邊法向量
             for (p1, p2) in edges:
                 # 定義兩個邊緣點 (p1, p2) 和 z 軸上下界，構建三個點來定義一個平面
-                point1 = torch.tensor([p1[0], p1[1], z_min], dtype=torch.float32,device=self.device)
-                point2 = torch.tensor([p2[0], p2[1], z_min], dtype=torch.float32,device=self.device)
-                point3 = torch.tensor([p1[0], p1[1], z_max], dtype=torch.float32,device=self.device)
+                point1 = torch.tensor([p1[0], p1[1], z_min], dtype=torch.float32, device=self.device)
+                point2 = torch.tensor([p2[0], p2[1], z_min], dtype=torch.float32, device=self.device)
+                point3 = torch.tensor([p1[0], p1[1], z_max], dtype=torch.float32, device=self.device)
 
                 # 計算兩個邊緣向量
                 edge_vector_1 = point2 - point1  # 邊的方向向量
@@ -193,14 +261,14 @@ class PolygonLocation(Location):
 
                 # 計算叉積以獲得法向量
                 normal = torch.cross(edge_vector_1, edge_vector_2, dim=0)
-                if not(all(normal == 0)):
+                if not (all(normal == 0)):
                     normal = normal / torch.norm(normal)  # 正規化為單位向量
 
                     normal_vectors.append(normal)
-        if len(list(set(self.vertices)))>2:
+        if len(list(set(self.vertices))) > 2:
             # 添加平行於 Z 軸的法向量（上表面和下表面）
-            top_surface_normal = torch.tensor([0.0, 0.0, 1.0], dtype=torch.float32,device=self.device)  # Z 軸正方向
-            bottom_surface_normal = torch.tensor([0.0, 0.0, -1.0], dtype=torch.float32,device=self.device)  # Z 軸負方向
+            top_surface_normal = torch.tensor([0.0, 0.0, 1.0], dtype=torch.float32, device=self.device)  # Z 軸正方向
+            bottom_surface_normal = torch.tensor([0.0, 0.0, -1.0], dtype=torch.float32, device=self.device)  # Z 軸負方向
 
             # 將上表面和下表面的法向量分別添加到法向量列表中
 
@@ -208,8 +276,6 @@ class PolygonLocation(Location):
             normal_vectors.append(bottom_surface_normal)
 
         return normal_vectors
-
-
 
     def sample(self, n, mode='random', variables=['x', 'y', 'z', 'f']):
         """
@@ -224,7 +290,7 @@ class PolygonLocation(Location):
             sampled_points = self._sample_outer(n)
 
         # 添加頻率維度取樣
-        f_values = torch.tensor(self.f_values,device=self.device)
+        f_values = torch.tensor(self.f_values, device=self.device)
 
         # 合併 x, y, z, f
         sampled_points_with_f = [
@@ -233,7 +299,6 @@ class PolygonLocation(Location):
 
         return LabelTensor(torch.tensor(sampled_points_with_f, dtype=torch.float32, device=self.device),
                            labels=['x', 'y', 'z', 'f'])
-
 
 
 class PortLocation(Location):
@@ -260,7 +325,7 @@ class PortLocation(Location):
     def is_inside(self, points):
         pass
 
-    def sample(self,n, mode='all', variables=['x', 'y', 'z', 'f']):
+    def sample(self, n, mode='all', variables=['x', 'y', 'z', 'f']):
         """
         生成樣本點，包含 (x, y, z) 和頻率範圍內的所有頻率。
         :param mode: 'all' 表示返回所有頻率的樣本點。
@@ -277,6 +342,8 @@ class PortLocation(Location):
 
     def __repr__(self):
         return (f"PortLocation(point={self.point}, frequencies={self.frequencies}, device='{self.device}')")
+
+
 # 測試 3D PolygonLocation
 
 if __name__ == "__main__":
@@ -292,7 +359,7 @@ if __name__ == "__main__":
         'z': [0, 0.1]
     }
     # 創建 PolygonLocation 物件
-    polygon = PolygonLocation(vertices,bound, f_values=[1e9], sample_mode='outer', z_range=(0.0, 1.0))
+    polygon = PolygonLocation(vertices, bound, f_values=[1e9], sample_mode='outer', z_range=(0.0, 1.0))
 
     # 執行邊緣取樣
     edge_points = polygon.sample(1500)
@@ -304,16 +371,14 @@ if __name__ == "__main__":
     print(edge_points.device)
     # 3D 視覺化
     import matplotlib.pyplot as plt
-    from mpl_toolkits.mplot3d import Axes3D
 
     fig = plt.figure(figsize=(10, 8))
     ax = fig.add_subplot(111, projection='3d')
 
-    ax.scatter(edge_points[:, 0], edge_points[:, 1], edge_points[:, 2], c='b', marker='o', alpha=0.5)
+    ax.scatter(edge_points[:, 0], edge_points[:, 1], edge_points[:, 2], c='b', marker='o')
 
     ax.set_title('3D Edge Sampling: XY Planes and Faces')
     ax.set_xlabel('X-axis')
     ax.set_ylabel('Y-axis')
     ax.set_zlabel('Z-axis')
     plt.show()
-
