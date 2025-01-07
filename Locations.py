@@ -114,7 +114,7 @@ class ConductorLocation(Location):
         Sample points inside the conductor region, with edge attraction effect,
         including XY plane edges and Z-axis boundaries, and combine with frequency values.
         """
-        n=n*self._polygon_area()/self._bound_area()
+        #n=n*self._polygon_area()/self._bound_area()
         edge_ratio = 0.3
         # **1️⃣ 原始點樣本**
         sampled_points = self._sample_interior(int(n * (1 - edge_ratio)))
