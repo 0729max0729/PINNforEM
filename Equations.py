@@ -2,22 +2,32 @@ import torch
 from pina.equation import Equation
 from pina.operators import laplacian
 
+import torch
+from pina.equation import Equation
+
+import torch
+from pina.equation import Equation
+
 
 class ConductorPotentialEquation(Equation):
     """
-    導體內電勢方程 (實部與虛部表示，考慮 ε 的虛部，假設電荷密度為 0)
+    導體內電勢方程 (實部與虛部表示，考慮 ε 的虛部，假設電荷密度為 0)。
+    引入形狀函數 S(x, y, z) 作為修正項。
     """
-    def __init__(self, sigma=0.0, epsilon=8.85e-12, mu=1.256e-6, tand=0.0):
+
+    def __init__(self, sigma=0.0, epsilon=8.85e-12, mu=1.256e-6, tand=0.0, shape_function=None):
         """
         :param float sigma: 導電率
         :param float epsilon: 介電常數
         :param float mu: 磁導率
         :param float tand: 損耗正切
+        :param shape_function: 形狀函數 S(x, y, z)
         """
         self.sigma = sigma
         self.epsilon_real = epsilon
-        self.epsilon_imag = epsilon * tand  # 虛部 ε'' = ε * tand
+        self.epsilon_imag = epsilon * tand
         self.mu = mu
+        self.shape_function = shape_function  # 傳入形狀函數
 
         def equation(input_, output_):
             """
@@ -30,64 +40,170 @@ class ConductorPotentialEquation(Equation):
             f = input_.extract(['f'])
             omega = 2 * torch.pi * f
 
-            # 方程殘差（實部）
-            residual_r = (
-                laplacian(output_, input_,components=['phi_r'],d=['x','y','z']) + omega * self.mu * self.sigma * phi_i
-            )
+            coords = input_.extract(['x', 'y', 'z']).requires_grad_(True)  # 確保 coords 可以計算梯度
 
-            # 方程殘差（虛部）
-            residual_i = (
-                laplacian(output_, input_,components=['phi_i'] ,d=['x','y','z']) - omega * self.mu * self.sigma * phi_r
-            )
+            # 形狀函數
+            if self.shape_function:
+                S = self.shape_function(coords)
+                phi_r = phi_r * S
+                phi_i = phi_i * S
 
-            # 合併殘差
-            residual = torch.sqrt(residual_r**2 + residual_i**2)
+            # 使用 PyTorch Autograd 計算 Laplacian
+            grad_phi_r = torch.autograd.grad(
+                outputs=phi_r,
+                inputs=coords,
+                grad_outputs=torch.ones_like(phi_r),
+                create_graph=True,
+                retain_graph=True,
+                allow_unused=True
+            )[0]
 
-            return residual/omega
+            laplacian_r = torch.zeros_like(phi_r)
+            if grad_phi_r is not None:
+                laplacian_r = sum(torch.autograd.grad(
+                    outputs=grad_phi_r[:, i],
+                    inputs=coords,
+                    grad_outputs=torch.ones_like(grad_phi_r[:, i]),
+                    create_graph=True,
+                    retain_graph=True,
+                    allow_unused=True
+                )[0][:, i] for i in range(coords.shape[1]))
+
+            grad_phi_i = torch.autograd.grad(
+                outputs=phi_i,
+                inputs=coords,
+                grad_outputs=torch.ones_like(phi_i),
+                create_graph=True,
+                retain_graph=True,
+                allow_unused=True
+            )[0]
+
+            laplacian_i = torch.zeros_like(phi_i)
+            if grad_phi_i is not None:
+                laplacian_i = sum(torch.autograd.grad(
+                    outputs=grad_phi_i[:, i],
+                    inputs=coords,
+                    grad_outputs=torch.ones_like(grad_phi_i[:, i]),
+                    create_graph=True,
+                    retain_graph=True,
+                    allow_unused=True
+                )[0][:, i] for i in range(coords.shape[1]))
+
+            # 方程殘差
+            residual_r = laplacian_r + omega * self.mu * self.sigma * phi_i
+            residual_i = laplacian_i - omega * self.mu * self.sigma * phi_r
+
+            residual = torch.sqrt(residual_r ** 2 + residual_i ** 2) / omega
+
+            return residual
 
         super().__init__(equation)
 
 
-
-
 class DielectricPotentialEquation(Equation):
     """
-    介質內電勢方程 (實部與虛部表示，考慮 ε 的虛部，假設電荷密度為 0)
+    介質內電勢方程 (實部與虛部表示，考慮 ε 的虛部，假設電荷密度為 0)。
+    引入形狀函數 S(x, y, z) 作為修正項。
     """
-    def __init__(self, epsilon=8.85e-12, mu=1.256e-6, tand=0.0):
+
+    def __init__(self, epsilon=8.85e-12, mu=1.256e-6, tand=0.0, shape_function=None):
         """
         :param float epsilon: 介電常數
         :param float mu: 磁導率
         :param float tand: 損耗正切
+        :param shape_function: 形狀函數 S(x, y, z)
         """
         self.epsilon_real = epsilon
-        self.epsilon_imag = epsilon * tand  # 虛部 ε'' = ε * tand
+        self.epsilon_imag = epsilon * tand
         self.mu = mu
+        self.shape_function = shape_function
 
         def equation(input_, output_):
             """
-            定義介質內電位方程的殘差，假設電荷密度為 0。
+            定義介質內電位方程的殘差。
             """
             # 提取變量
-            phi_r = output_.extract(['phi_r'])  # 電勢實部
-            phi_i = output_.extract(['phi_i'])  # 電勢虛部
-
+            phi_r = output_.extract(['phi_r'])
+            phi_i = output_.extract(['phi_i'])
             f = input_.extract(['f'])
             omega = 2 * torch.pi * f
 
-            # 方程殘差（實部）
+            coords = input_.extract(['x', 'y', 'z']).requires_grad_(True)
+
+            # 形狀函數修正
+            if self.shape_function:
+                S = self.shape_function(coords)
+                phi_r = phi_r * S
+                phi_i = phi_i * S
+
+            # -------------------------------
+            # 計算實部的梯度和 Laplacian
+            # -------------------------------
+            grad_phi_r = torch.autograd.grad(
+                outputs=phi_r,
+                inputs=coords,
+                grad_outputs=torch.ones_like(phi_r),
+                create_graph=True,
+                retain_graph=True,
+                allow_unused=True
+            )[0]
+
+            laplacian_r = torch.zeros_like(phi_r)
+            if grad_phi_r is not None:
+                for i in range(coords.shape[1]):
+                    grad2_phi_r = torch.autograd.grad(
+                        outputs=grad_phi_r[:, i],
+                        inputs=coords,
+                        grad_outputs=torch.ones_like(grad_phi_r[:, i]),
+                        create_graph=True,
+                        retain_graph=True,
+                        allow_unused=True
+                    )[0]
+                    if grad2_phi_r is not None:
+                        laplacian_r += grad2_phi_r[:, i]
+
+            # -------------------------------
+            # 計算虛部的梯度和 Laplacian
+            # -------------------------------
+            grad_phi_i = torch.autograd.grad(
+                outputs=phi_i,
+                inputs=coords,
+                grad_outputs=torch.ones_like(phi_i),
+                create_graph=True,
+                retain_graph=True,
+                allow_unused=True
+            )[0]
+
+            laplacian_i = torch.zeros_like(phi_i)
+            if grad_phi_i is not None:
+                for i in range(coords.shape[1]):
+                    grad2_phi_i = torch.autograd.grad(
+                        outputs=grad_phi_i[:, i],
+                        inputs=coords,
+                        grad_outputs=torch.ones_like(grad_phi_i[:, i]),
+                        create_graph=True,
+                        retain_graph=True,
+                        allow_unused=True
+                    )[0]
+                    if grad2_phi_i is not None:
+                        laplacian_i += grad2_phi_i[:, i]
+
+            # -------------------------------
+            # 計算殘差
+            # -------------------------------
             residual_r = (
-                laplacian(output_, input_,components=['phi_r'],d=['x','y','z']) + (self.mu * self.epsilon_real * (omega**2) * phi_r)
-                - (self.mu * self.epsilon_imag * omega**2 * phi_i)
+                    laplacian_r
+                    + (self.mu * self.epsilon_real * omega ** 2 * phi_r)
+                    - (self.mu * self.epsilon_imag * omega ** 2 * phi_i)
+            )
+            residual_i = (
+                    laplacian_i
+                    + (self.mu * self.epsilon_real * omega ** 2 * phi_i)
+                    + (self.mu * self.epsilon_imag * omega ** 2 * phi_r)
             )
 
-            # 方程殘差（虛部）
-            residual_i = (
-                laplacian(output_, input_,components=['phi_i'],d=['x','y','z']) + (self.mu * self.epsilon_real * (omega**2) * phi_i)
-                + (self.mu * self.epsilon_imag * omega**2 * phi_r)
-            )
             # 合併殘差
-            residual = torch.sqrt(residual_r**2 + residual_i**2)
+            residual = torch.sqrt(residual_r ** 2 + residual_i ** 2)
 
             return residual
 
@@ -128,7 +244,6 @@ class InitialConditionEquation(Equation):
             return torch.sqrt(
                 residual_phi_r**2 +
                 residual_phi_i**2
-
-            )
+            )*10
 
         super().__init__(equation)

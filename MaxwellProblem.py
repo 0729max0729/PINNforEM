@@ -6,8 +6,8 @@ from pina.condition import Condition
 from sympy.physics.units import frequency
 
 from Equations import InitialConditionEquation
-from Locations import PolygonLocation, PortLocation
-from Materials import Material, MaterialHandler
+
+from Substrate import Substrate
 
 
 class Maxwell3D(TimeDependentProblem, SpatialProblem):
@@ -27,7 +27,7 @@ class Maxwell3D(TimeDependentProblem, SpatialProblem):
 
     # **3️⃣ 初始化條件**
     conditions = {}
-    def __init__(self, material_handler: MaterialHandler,
+    def __init__(self, substrates,
                  ports,
                  spatial_domain,
                  frequency_domain):
@@ -38,7 +38,7 @@ class Maxwell3D(TimeDependentProblem, SpatialProblem):
         :param spatial_domain: Custom spatial domain {'x': [x_min, x_max], 'y': [y_min, y_max], 'z': [z_min, z_max]}.
         :param frequency_domain: Custom frequency domain {'f': [f_min, f_max]}.
         """
-        self.material_handler = material_handler
+        self.substrates = substrates
         self.wave_port=ports
 
         self.spatial_domain = CartesianDomain(spatial_domain)
@@ -63,8 +63,9 @@ class Maxwell3D(TimeDependentProblem, SpatialProblem):
         conditions = {}
 
         ## **7️⃣ 材料條件**
-        material_conditions = self.material_handler.apply_equations()
-        conditions.update(material_conditions)
+        for substrate in self.substrates:
+            substrate_conditions = substrate.generate_conditions()
+            conditions.update(substrate_conditions)
 
         ## **8️⃣ 初始條件**
         for wave_port in self.wave_port:
@@ -75,40 +76,6 @@ class Maxwell3D(TimeDependentProblem, SpatialProblem):
         return conditions
 
 
-    def print_information(self):
-        """
-        Print all locations (spatial and frequency ranges) associated with the materials.
-        """
-        print("📍 **All Locations in Maxwell3D Problem**")
-        print("Spatial Domain:", self.spatial_domain)
-        print("Frequency Domain:", self.frequency_domain)
-        print("-" * 50)
-
-        for i, material in enumerate(self.material_handler.materials):
-            print(f"🧱 Material {i + 1}: {material.name}")
-            print(f"   - Location Sample Mode: {material.location.sample_mode}")
-            print(f"   - Z Range: {material.location.z_range}")
-            print(f"   - Frequency Values: {material.location.f_values}")
-            print(f"   - Device: {material.location.device}")
-            print("   - Vertices:")
-            for vertex in material.location.vertices:
-                print(f"     {vertex}")
-            print("-" * 50)
-        """
-                Print all conditions defined in the Maxwell3D problem.
-                """
-        print("\n📍 **All Conditions in Maxwell3D Problem**")
-        print("-" * 50)
-
-        if not self.conditions:
-            print("⚠️ No conditions have been defined.")
-            return
-
-        for name, condition in self.conditions.items():
-            print(f"📝 Condition Name: {name}")
-            print(f"   - Location: {condition.location}")
-            print(f"   - Equation: {condition.equation}")
-            print("-" * 50)
 
 
 if __name__ == "__main__":
