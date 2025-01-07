@@ -5,6 +5,8 @@ from pina.model import FeedForward, DeepONet
 from pina.model.layers import FourierFeatureEmbedding
 from pina.utils import LabelTensor
 
+from Shape_function import ShapeFunction
+
 
 # 📌 時間子網路
 class TimeNet(nn.Module):
@@ -66,6 +68,7 @@ class TimeSpaceNet(nn.Module):
         self.space_net = SpaceNet(output_dim=64)
         self.fusion_net = FusionNet(time_feature_dim=8, space_feature_dim=64, output_dim=64)
         self.layers = FeedForward(input_dimensions=64, output_dimensions=2, n_layers=10,inner_size=128)
+        self.output_layer = ShapeFunctionModule(ShapeFunction())
     def forward(self, input_tensor: LabelTensor):
         """
         input_tensor: LabelTensor 標記 ['x', 'y', 'z', 'f']
@@ -81,6 +84,7 @@ class TimeSpaceNet(nn.Module):
         # 融合時間與空間特徵
         output = self.fusion_net(time_features, space_features)
         output = self.layers(output)
+        output = self.output_layer(output,space_input)
         return LabelTensor(output, labels=['phi_r', 'phi_i'])
 
 class MultiscaleFourierNet(torch.nn.Module):
@@ -103,6 +107,43 @@ class MultiscaleFourierNet(torch.nn.Module):
         e2 = self.embedding2(x)
         e3 = self.embedding3(x)
         return self.final_layers(torch.cat([e1, e2, e3], dim=-1))
+
+
+class ShapeFunctionModule(nn.Module):
+    """
+    使用形狀函數 S(x-x₀, y-y₀, z-z₀) 對 phi 進行加權。
+    phi 包含實部 (phi_r) 和虛部 (phi_i)。
+    """
+    def __init__(self, shape_function):
+        """
+        :param shape_function: 一個可調用的形狀函數，S(x, y, z)。
+        """
+        super(ShapeFunctionModule, self).__init__()
+        self.shape_function = shape_function  # 傳入自定義的形狀函數
+
+    def forward(self, phi, coords):
+        """
+        前向傳播：計算形狀函數加權的 phi。
+
+        :param phi: 電勢張量，包含實部與虛部 (batch_size, n_points, 2)
+        :param coords: 座標點 (batch_size, n_points, 3)
+        :return: 加權後的 phi，包含實部與虛部 (batch_size, n_points, 2)
+        """
+        # 確保 coords 需要梯度計算
+        coords = coords.requires_grad_(True)
+
+        # 計算相對座標 (每個點與所有點的相對距離)
+        relative_coords = coords.unsqueeze(1) - coords.unsqueeze(0)  # (batch_size, n_points, n_points, 3)
+
+        # 計算形狀函數 S，並確保其維度一致
+        S = self.shape_function(relative_coords)  # (batch_size, n_points, n_points)
+        S = S.unsqueeze(-1)  # 增加最後一個維度 (batch_size, n_points, n_points, 1)
+
+        # 對實部和虛部進行加權求和
+        phi_sum = phi.unsqueeze(1) * S  # (batch_size, n_points, n_points, 2)
+        phi_sum = torch.sum(phi_sum, dim=1)  # (batch_size, n_points, 2)
+
+        return phi_sum
 
 
 class DEEPONET(nn.Module):

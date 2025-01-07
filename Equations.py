@@ -44,16 +44,10 @@ class ConductorPotentialEquation(Equation):
 
             coords = input_.extract(['x', 'y', 'z']).requires_grad_(True)  # 確保 coords 可以計算梯度
 
-            # 形狀函數
-            relative_coords = coords.unsqueeze(1) - coords.unsqueeze(0)
-            S = self.shape_function(relative_coords).unsqueeze(-1)  # 計算形狀函數值
-
-            phi_r_sum = phi_r * torch.sum(S,dim=1)
-            phi_i_sum = phi_i * torch.sum(S,dim=1)
 
             # 使用 PyTorch Autograd 計算 Laplacian
             grad_phi_r = torch.autograd.grad(
-                outputs=phi_r_sum,
+                outputs=phi_r,
                 inputs=coords,
                 grad_outputs=torch.ones_like(phi_r),
                 create_graph=True,
@@ -73,7 +67,7 @@ class ConductorPotentialEquation(Equation):
                 )[0][:, i] for i in range(coords.shape[1]))
 
             grad_phi_i = torch.autograd.grad(
-                outputs=phi_i_sum,
+                outputs=phi_i,
                 inputs=coords,
                 grad_outputs=torch.ones_like(phi_i),
                 create_graph=True,
@@ -145,26 +139,21 @@ class DielectricPotentialEquation(Equation):
             # -------------------------------
             # 加權求和: φ_sum = Σ(φ * S)
             # -------------------------------
-            # 形狀函數
-            relative_coords = coords.unsqueeze(1) - coords.unsqueeze(0)
-            S = self.shape_function(relative_coords).unsqueeze(-1)  # 計算形狀函數值
 
-            phi_r_sum = phi_r * torch.sum(S, dim=1)
-            phi_i_sum = phi_i * torch.sum(S, dim=1)
 
             # -------------------------------
             # 計算實部的梯度和 Laplacian
             # -------------------------------
             grad_phi_r = torch.autograd.grad(
-                outputs=phi_r_sum,
+                outputs=phi_r,
                 inputs=coords,
-                grad_outputs=torch.ones_like(phi_r_sum),
+                grad_outputs=torch.ones_like(phi_r),
                 create_graph=True,
                 retain_graph=True,
                 allow_unused=True
             )[0]
 
-            laplacian_r = torch.zeros_like(phi_r_sum)
+            laplacian_r = torch.zeros_like(phi_r)
             if grad_phi_r is not None:
                 for i in range(coords.shape[1]):
                     grad2_phi_r = torch.autograd.grad(
@@ -182,15 +171,15 @@ class DielectricPotentialEquation(Equation):
             # 計算虛部的梯度和 Laplacian
             # -------------------------------
             grad_phi_i = torch.autograd.grad(
-                outputs=phi_i_sum,
+                outputs=phi_i,
                 inputs=coords,
-                grad_outputs=torch.ones_like(phi_i_sum),
+                grad_outputs=torch.ones_like(phi_i),
                 create_graph=True,
                 retain_graph=True,
                 allow_unused=True
             )[0]
 
-            laplacian_i = torch.zeros_like(phi_i_sum)
+            laplacian_i = torch.zeros_like(phi_i)
             if grad_phi_i is not None:
                 for i in range(coords.shape[1]):
                     grad2_phi_i = torch.autograd.grad(
@@ -209,13 +198,13 @@ class DielectricPotentialEquation(Equation):
             # -------------------------------
             residual_r = (
                     laplacian_r
-                    + (self.mu * self.epsilon_real * omega ** 2 * phi_r_sum)
-                    - (self.mu * self.epsilon_imag * omega ** 2 * phi_i_sum)
+                    + (self.mu * self.epsilon_real * omega ** 2 * phi_r)
+                    - (self.mu * self.epsilon_imag * omega ** 2 * phi_i)
             )
             residual_i = (
                     laplacian_i
-                    + (self.mu * self.epsilon_real * omega ** 2 * phi_i_sum)
-                    + (self.mu * self.epsilon_imag * omega ** 2 * phi_r_sum)
+                    + (self.mu * self.epsilon_real * omega ** 2 * phi_i)
+                    + (self.mu * self.epsilon_imag * omega ** 2 * phi_r)
             )
 
             # 合併殘差
