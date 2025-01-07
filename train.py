@@ -89,7 +89,7 @@ substrate1=Substrate([vertices_copper1,vertices_copper2],custom_spatial_domain,m
 problem = Maxwell3D(spatial_domain=custom_spatial_domain,frequency_domain=custom_frequency_domain,substrates=[substrate1],ports=[port1,port2])
 
 # 離散化網格
-problem.discretise_domain(n=5000, mode='random', variables=['x', 'y', 'z', 'f'], locations='all')
+problem.discretise_domain(n=1000, mode='random', variables=['x', 'y', 'z', 'f'], locations='all')
 
 
 

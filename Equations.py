@@ -45,15 +45,11 @@ class ConductorPotentialEquation(Equation):
             coords = input_.extract(['x', 'y', 'z']).requires_grad_(True)  # 確保 coords 可以計算梯度
 
             # 形狀函數
-            phi_r_sum = torch.zeros_like(phi_r)
-            phi_i_sum = torch.zeros_like(phi_i)
+            relative_coords = coords.unsqueeze(1) - coords.unsqueeze(0)
+            S = self.shape_function(relative_coords).unsqueeze(-1)  # 計算形狀函數值
 
-            for center in coords:
-                relative_coords = coords - center
-                S = self.shape_function(relative_coords).unsqueeze(-1)  # 計算形狀函數值
-
-                phi_r_sum += phi_r * S
-                phi_i_sum += phi_i * S
+            phi_r_sum = phi_r * torch.sum(S,dim=1)
+            phi_i_sum = phi_i * torch.sum(S,dim=1)
 
             # 使用 PyTorch Autograd 計算 Laplacian
             grad_phi_r = torch.autograd.grad(
@@ -120,7 +116,7 @@ class DielectricPotentialEquation(Equation):
     支援多個形狀函數 S(x-x₀, y-y₀, z-z₀) 的加權和。
     """
 
-    def __init__(self, epsilon=8.85e-12, mu=1.256e-6, tand=0.0, shape_functions=ShapeFunction(), centers=None):
+    def __init__(self, epsilon=8.85e-12, mu=1.256e-6, tand=0.0, shape_function=ShapeFunction(), centers=None):
         """
         :param float epsilon: 介電常數
         :param float mu: 磁導率
@@ -131,7 +127,7 @@ class DielectricPotentialEquation(Equation):
         self.epsilon_real = epsilon
         self.epsilon_imag = epsilon * tand
         self.mu = mu
-        self.shape_functions = shape_functions if shape_functions is not None else []
+        self.shape_function = shape_function if shape_function is not None else []
 
 
 
@@ -149,15 +145,12 @@ class DielectricPotentialEquation(Equation):
             # -------------------------------
             # 加權求和: φ_sum = Σ(φ * S)
             # -------------------------------
-            phi_r_sum = torch.zeros_like(phi_r)
-            phi_i_sum = torch.zeros_like(phi_i)
+            # 形狀函數
+            relative_coords = coords.unsqueeze(1) - coords.unsqueeze(0)
+            S = self.shape_function(relative_coords).unsqueeze(-1)  # 計算形狀函數值
 
-            for center in coords:
-                relative_coords = coords - center
-                S = self.shape_functions(relative_coords).unsqueeze(-1)  # 計算形狀函數值
-
-                phi_r_sum += phi_r * S
-                phi_i_sum += phi_i * S
+            phi_r_sum = phi_r * torch.sum(S, dim=1)
+            phi_i_sum = phi_i * torch.sum(S, dim=1)
 
             # -------------------------------
             # 計算實部的梯度和 Laplacian
