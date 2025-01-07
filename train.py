@@ -162,7 +162,8 @@ if __name__ == "__main__":
             components='phi_r',
             fixed_variables={'z':0.05, 'f': ff},
             levels = 50,
-            title=f'phi_r at f={ff}'
+            title=f'phi_r at f={ff}',
+            res=100
         )
     for ff in f:
         plotter.plot(
@@ -170,5 +171,6 @@ if __name__ == "__main__":
             components='phi_i',
             fixed_variables={'z': 0.05, 'f': ff},
             levels=50,
-            title=f'phi_i at f={ff}'
+            title=f'phi_i at f={ff}',
+            res=100
         )
