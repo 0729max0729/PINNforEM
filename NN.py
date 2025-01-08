@@ -30,7 +30,7 @@ class SpaceNet(nn.Module):
         self.fc1 = FeedForward(input_dimensions=input_dim, output_dimensions=hidden_dim, layers=[100])
         self.activation = nn.Tanh()
         self.fourierNet = MultiscaleFourierNet(hidden_dim,hidden_dim)
-        self.fc2 = FeedForward(input_dimensions=hidden_dim, output_dimensions=output_dim, n_layers=10,inner_size=128)
+        self.fc2 = FeedForward(input_dimensions=hidden_dim, output_dimensions=output_dim, n_layers=3,inner_size=128)
     def forward(self, x):
         """
         x: LabelTensor (batch_size, 3) 來自 'x', 'y', 'z' 維度
@@ -67,7 +67,7 @@ class TimeSpaceNet(nn.Module):
         self.time_net = TimeNet(output_dim=8)
         self.space_net = SpaceNet(output_dim=64)
         self.fusion_net = FusionNet(time_feature_dim=8, space_feature_dim=64, output_dim=64)
-        self.layers = FeedForward(input_dimensions=64, output_dimensions=2, n_layers=10,inner_size=128)
+        self.layers = FeedForward(input_dimensions=64, output_dimensions=2, n_layers=3,inner_size=128)
         self.output_layer = ShapeFunctionModule(ShapeFunction())
     def forward(self, input_tensor: LabelTensor):
         """
@@ -75,7 +75,7 @@ class TimeSpaceNet(nn.Module):
         """
         # 從 LabelTensor 中提取時間和空間維度
         time_input = input_tensor.extract(['f'])/1e6  # 提取時間維度
-        space_input = input_tensor.extract(['x', 'y', 'z'])  # 提取空間維度
+        space_input = input_tensor.extract(['x', 'y', 'z'])*1e2  # 提取空間維度
 
         # 分別經過時間和空間子網路
         time_features = self.time_net(time_input)
@@ -84,7 +84,7 @@ class TimeSpaceNet(nn.Module):
         # 融合時間與空間特徵
         output = self.fusion_net(time_features, space_features)
         output = self.layers(output)
-        output = self.output_layer(output,space_input)
+        #output = self.output_layer(output,space_input)
         return LabelTensor(output, labels=['phi_r', 'phi_i'])
 
 class MultiscaleFourierNet(torch.nn.Module):
@@ -140,8 +140,7 @@ class ShapeFunctionModule(nn.Module):
         S = S.unsqueeze(-1)  # 增加最後一個維度 (batch_size, n_points, n_points, 1)
 
         # 對實部和虛部進行加權求和
-        phi_sum = phi.unsqueeze(1) * S  # (batch_size, n_points, n_points, 2)
-        phi_sum = torch.sum(phi_sum, dim=1)  # (batch_size, n_points, 2)
+        phi_sum = phi * torch.sum(S, dim=1)  # (batch_size, n_points, 2)
 
         return phi_sum
 

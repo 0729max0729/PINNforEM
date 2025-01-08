@@ -89,7 +89,7 @@ substrate1=Substrate([vertices_copper1,vertices_copper2],custom_spatial_domain,m
 problem = Maxwell3D(spatial_domain=custom_spatial_domain,frequency_domain=custom_frequency_domain,substrates=[substrate1],ports=[port1,port2])
 
 # 離散化網格
-problem.discretise_domain(n=1000, mode='random', variables=['x', 'y', 'z', 'f'], locations='all')
+problem.discretise_domain(n=5000, mode='random', variables=['x', 'y', 'z', 'f'], locations='all')
 
 
 
@@ -126,7 +126,7 @@ pinn = RBAPINN(
     problem=problem,  # 3D Maxwell 問題
     model=model,
     optimizer_kwargs={'lr': 1e-5},
-    extra_features=[HelmholtzFeature(num_sources=2)]
+    #extra_features=[HelmholtzFeature(num_sources=2)]
 )
 
 # 定义模型检查点回调
@@ -141,7 +141,7 @@ checkpoint_callback = ModelCheckpoint(
 # 创建 Trainer 实例，并传入回调函数
 trainer = Trainer(
     solver=pinn,
-    max_epochs=10,
+    max_epochs=10000,
     #callbacks=[checkpoint_callback],
     accelerator='gpu' if torch.cuda.is_available() else 'cpu',
     enable_model_summary=False

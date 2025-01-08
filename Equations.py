@@ -42,49 +42,12 @@ class ConductorPotentialEquation(Equation):
             f = input_.extract(['f'])
             omega = 2 * torch.pi * f
 
-            coords = input_.extract(['x', 'y', 'z']).requires_grad_(True)  # 確保 coords 可以計算梯度
+
+            laplacian_r = laplacian(output_, input_, components=['phi_r'], d=['x', 'y', 'z'])
 
 
-            # 使用 PyTorch Autograd 計算 Laplacian
-            grad_phi_r = torch.autograd.grad(
-                outputs=phi_r,
-                inputs=coords,
-                grad_outputs=torch.ones_like(phi_r),
-                create_graph=True,
-                retain_graph=True,
-                allow_unused=True
-            )[0]
 
-            laplacian_r = torch.zeros_like(phi_r)
-            if grad_phi_r is not None:
-                laplacian_r = sum(torch.autograd.grad(
-                    outputs=grad_phi_r[:, i],
-                    inputs=coords,
-                    grad_outputs=torch.ones_like(grad_phi_r[:, i]),
-                    create_graph=True,
-                    retain_graph=True,
-                    allow_unused=True
-                )[0][:, i] for i in range(coords.shape[1]))
-
-            grad_phi_i = torch.autograd.grad(
-                outputs=phi_i,
-                inputs=coords,
-                grad_outputs=torch.ones_like(phi_i),
-                create_graph=True,
-                retain_graph=True,
-                allow_unused=True
-            )[0]
-
-            laplacian_i = torch.zeros_like(phi_i)
-            if grad_phi_i is not None:
-                laplacian_i = sum(torch.autograd.grad(
-                    outputs=grad_phi_i[:, i],
-                    inputs=coords,
-                    grad_outputs=torch.ones_like(grad_phi_i[:, i]),
-                    create_graph=True,
-                    retain_graph=True,
-                    allow_unused=True
-                )[0][:, i] for i in range(coords.shape[1]))
+            laplacian_i = laplacian(output_, input_, components=['phi_i'], d=['x', 'y', 'z'])
 
             # 方程殘差
             residual_r = laplacian_r + omega * self.mu * self.sigma * phi_i
@@ -134,65 +97,15 @@ class DielectricPotentialEquation(Equation):
             f = input_.extract(['f'])
             omega = 2 * torch.pi * f
 
-            coords = input_.extract(['x', 'y', 'z']).requires_grad_(True)
-
-            # -------------------------------
-            # 加權求和: φ_sum = Σ(φ * S)
-            # -------------------------------
 
 
-            # -------------------------------
-            # 計算實部的梯度和 Laplacian
-            # -------------------------------
-            grad_phi_r = torch.autograd.grad(
-                outputs=phi_r,
-                inputs=coords,
-                grad_outputs=torch.ones_like(phi_r),
-                create_graph=True,
-                retain_graph=True,
-                allow_unused=True
-            )[0]
-
-            laplacian_r = torch.zeros_like(phi_r)
-            if grad_phi_r is not None:
-                for i in range(coords.shape[1]):
-                    grad2_phi_r = torch.autograd.grad(
-                        outputs=grad_phi_r[:, i],
-                        inputs=coords,
-                        grad_outputs=torch.ones_like(grad_phi_r[:, i]),
-                        create_graph=True,
-                        retain_graph=True,
-                        allow_unused=True
-                    )[0]
-                    if grad2_phi_r is not None:
-                        laplacian_r += grad2_phi_r[:, i]
-
+            laplacian_r=laplacian(output_,input_,components=['phi_r'],d=['x','y','z'])
             # -------------------------------
             # 計算虛部的梯度和 Laplacian
             # -------------------------------
-            grad_phi_i = torch.autograd.grad(
-                outputs=phi_i,
-                inputs=coords,
-                grad_outputs=torch.ones_like(phi_i),
-                create_graph=True,
-                retain_graph=True,
-                allow_unused=True
-            )[0]
 
-            laplacian_i = torch.zeros_like(phi_i)
-            if grad_phi_i is not None:
-                for i in range(coords.shape[1]):
-                    grad2_phi_i = torch.autograd.grad(
-                        outputs=grad_phi_i[:, i],
-                        inputs=coords,
-                        grad_outputs=torch.ones_like(grad_phi_i[:, i]),
-                        create_graph=True,
-                        retain_graph=True,
-                        allow_unused=True
-                    )[0]
-                    if grad2_phi_i is not None:
-                        laplacian_i += grad2_phi_i[:, i]
 
+            laplacian_i=laplacian(output_,input_,components=['phi_i'],d=['x','y','z'])
             # -------------------------------
             # 計算殘差
             # -------------------------------
